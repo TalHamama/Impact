@@ -1,0 +1,51 @@
+@import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap');
+@import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');
+
+:root {
+    --primary: #6366F1;
+    --bg-main: #F1F5F9;
+    --border: #E2E8F0;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Heebo', 'Assistant', sans-serif;
+    background-color: var(--bg-main);
+    direction: rtl;
+}
+
+button {
+    font-family: inherit;
+    cursor: pointer;
+}
+
+textarea {
+    font-family: inherit;
+}
+
+::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 4px;
+}
+
+.hvr {
+    transition: all .14s;
+}
+
+.hvr:hover {
+    filter: brightness(.95);
+}
+
+.srow:hover {
+    background: #F8FAFC;
+}

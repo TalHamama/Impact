@@ -1,0 +1,628 @@
+import { useState } from "react";
+import { AlertCircle, CheckCircle, Wrench, FileText, Zap, AlertTriangle, XCircle, MapPin, Activity, Shield, Clock, X, Filter, Package } from "lucide-react";
+
+// ── DATA ─────────────────────────────────────────────────────
+const NODES = [
+  {
+    id:"n1",  label:"רמת גן א",      short:"רמת גן א",    type:"A", onMap:true,  status:"active",  score:85, lat:190, lng:210, effortColor:null,
+    description:"NODE ראשי של אזור רמת גן. תלוי בתחנה א, משפיע על משימה א ומשימה ב.",
+    coords:"32.08°N, 34.81°E", zone:"רמת גן", owner:"עיריית רמת גן",
+    impacts:["משימה א","משימה ב"], alternatives:["רמת גן ב"],
+    incidents:[{date:"01/03/2026",reporter:"דנה כהן",desc:"עיכוב קל בהעברת משאבים למשימה א.",status:"בטיפול"}],
+    steps:["בדוק קישוריות מול תחנה א","אם תחנה א אינה זמינה — עבור לתחנה ב דרך רמת גן ב","הפעל נוהל חלופי דרך רמת גן ב","עדכן מנהל אזור על המעבר לחלופה"],
+  },
+  {
+    id:"n2",  label:"תחנה א",        short:"תחנה א",      type:"B", onMap:true,  status:"active",  score:92, lat:105, lng:115, effortColor:null,
+    description:"תחנת מקור ראשית המזינה את NODE רמת גן א ו-NODE גבעתיים א.",
+    coords:"32.09°N, 34.79°E", zone:"תל אביב", owner:"רשות התשתיות",
+    impacts:["רמת גן א","גבעתיים א"], alternatives:[],
+    incidents:[],
+    steps:["פנה לצוות טכני של רשות התשתיות","הפעל מחולל גיבוי פנימי","עדכן NODEs תלויים"],
+  },
+  {
+    id:"n3",  label:"משימה א",       short:"משימה א",     type:"A", onMap:false, status:"active",  score:78, lat:0,   lng:0,   effortColor:null,
+    description:"משימה תפעולית הנשענת על רמת גן א. כשל ישפיע על מאמץ החשמל.",
+    coords:"32.06°N, 34.78°E", zone:"רמת גן", owner:"מפקד אזור",
+    impacts:["מאמץ החשמל","גבעתיים א"], alternatives:[],
+    incidents:[],
+    steps:["בדוק זמינות משאבי כוח האדם","אתר מקור חלופי","דווח למפקד אזור על עיכוב"],
+  },
+  {
+    id:"n4",  label:"משימה ב",       short:"משימה ב",     type:"A", onMap:false, status:"warning", score:55, lat:0,   lng:0,   effortColor:null,
+    description:"משימה תפעולית שנייה הנשענת על רמת גן א. כשל ישפיע על מאמץ המים ומאמץ האוכל.",
+    coords:"32.07°N, 34.83°E", zone:"רמת גן", owner:"מפקד אזור",
+    impacts:["מאמץ המים","מאמץ האוכל"], alternatives:[],
+    incidents:[{date:"02/03/2026",reporter:"אבי לוי",desc:"ירידה בקצב ביצוע המשימה, 55% תפוקה.",status:"בטיפול"}],
+    steps:["בדוק מצב שרשרת האספקה","הפעל צוות חלופי אם זמין","תעד את הפגיעה ועדכן מפקד"],
+  },
+  {
+    id:"n5",  label:"רמת גן ב",      short:"רמת גן ב",    type:"A", onMap:true,  status:"active",  score:90, lat:130, lng:315, effortColor:null,
+    description:"NODE חלופי לרמת גן א. מופעל כאשר רמת גן א אינו זמין. תלוי בתחנה ב.",
+    coords:"32.10°N, 34.84°E", zone:"רמת גן", owner:"עיריית רמת גן",
+    impacts:[], alternatives:[],
+    incidents:[],
+    steps:["וודא שתחנה ב פעילה לפני הפעלת החלופה","הפעל נוהל מעבר מרמת גן א","עדכן את כלל ה-NODEs המושפעים"],
+  },
+  {
+    id:"n6",  label:"תחנה ב",        short:"תחנה ב",      type:"B", onMap:true,  status:"active",  score:95, lat:58,  lng:248, effortColor:null,
+    description:"תחנת מקור גיבוי המזינה את NODE רמת גן ב.",
+    coords:"32.12°N, 34.82°E", zone:"תל אביב", owner:"רשות התשתיות",
+    impacts:["רמת גן ב"], alternatives:[],
+    incidents:[],
+    steps:["פנה לצוות טכני של רשות התשתיות","וודא הפעלה תקינה של מחולל הגיבוי"],
+  },
+  {
+    id:"n7",  label:"מאמץ האנשים",   short:"אנשים",       type:"C", onMap:false, status:"active",  score:80, lat:0,   lng:0,   effortColor:"#7C3AED",
+    description:"מאמץ כוח האדם.",
+    coords:"—", zone:"שטח מבצעי", owner:"מפקד שטח",
+    impacts:[], alternatives:[],
+    incidents:[],
+    steps:["הפנה כוח אדם ממשימות עדיפות נמוכה","דווח למפקד על מצב הכוח"],
+  },
+  {
+    id:"n8",  label:"מאמץ האוכל",    short:"אוכל",        type:"C", onMap:false, status:"warning", score:50, lat:0,   lng:0,   effortColor:"#0891B2",
+    description:"מאמץ אספקת המזון הנשען על משימה ב.",
+    coords:"—", zone:"שטח מבצעי", owner:"מפקד שטח",
+    impacts:[], alternatives:[],
+    incidents:[{date:"02/03/2026",reporter:"רונית שמיר",desc:"עיכוב באספקת מזון בשל תקלה במשימה ב.",status:"בטיפול"}],
+    steps:["הפעל מלאי חירום","אתר מסלול אספקה חלופי","עדכן מפקד שטח בדחיפות"],
+  },
+  {
+    id:"n9",  label:"גבעתיים א",     short:"גבעתיים א",   type:"A", onMap:true,  status:"active",  score:88, lat:225, lng:135, effortColor:null,
+    description:"NODE של אזור גבעתיים. תלוי בתחנה א, מושפע ומשפיע על משימה א.",
+    coords:"32.07°N, 34.81°E", zone:"גבעתיים", owner:"עיריית גבעתיים",
+    impacts:["משימה א"], alternatives:[],
+    incidents:[],
+    steps:["בדוק קישוריות מול תחנה א","אם תחנה א לא זמינה — פנה לגורם מאשר להפעלת חלופה","עדכן מנהל אזור"],
+  },
+  {
+    id:"n10", label:"מאמץ המים",     short:"מים",         type:"C", onMap:false, status:"active",  score:73, lat:0,   lng:0,   effortColor:"#0EA5E9",
+    description:"מאמץ אספקת המים הנשען על משימה ב.",
+    coords:"—", zone:"שטח מבצעי", owner:"מפקד שטח",
+    impacts:[], alternatives:[],
+    incidents:[],
+    steps:["הפעל מאגר חירום","עדכן מפקד על מצב אספקת המים"],
+  },
+  {
+    id:"n11", label:"מאמץ החשמל",    short:"חשמל",        type:"C", onMap:false, status:"active",  score:82, lat:0,   lng:0,   effortColor:"#D97706",
+    description:"מאמץ אספקת החשמל הנשען על משימה א.",
+    coords:"—", zone:"שטח מבצעי", owner:"מפקד שטח",
+    impacts:[], alternatives:[],
+    incidents:[],
+    steps:["הפעל גנרטור גיבוי","בדוק עומסים על הרשת","דווח למפקד"],
+  },
+];
+
+const EDGES = [
+  // רמת גן א
+  {id:"e1",  s:"n2",  t:"n1",  kind:"DEPENDENCY"},   // תחנה א → רמת גן א
+  {id:"e2",  s:"n1",  t:"n3",  kind:"IMPACTS"},       // רמת גן א → משימה א
+  {id:"e3",  s:"n1",  t:"n4",  kind:"IMPACTS"},       // רמת גן א → משימה ב
+  {id:"e4",  s:"n1",  t:"n5",  kind:"ALTERNATIVE"},   // רמת גן א ↔ רמת גן ב
+  // תחנות
+  {id:"e5",  s:"n6",  t:"n5",  kind:"DEPENDENCY"},    // תחנה ב → רמת גן ב
+  {id:"e6",  s:"n2",  t:"n9",  kind:"DEPENDENCY"},    // תחנה א → גבעתיים א
+  // משימות → מאמצים
+  {id:"e7",  s:"n3",  t:"n11", kind:"IMPACTS"},       // משימה א → מאמץ החשמל
+  {id:"e8",  s:"n4",  t:"n10", kind:"IMPACTS"},       // משימה ב → מאמץ המים
+  {id:"e9",  s:"n4",  t:"n8",  kind:"IMPACTS"},       // משימה ב → מאמץ האוכל
+  // גבעתיים א ↔ משימה א
+  {id:"e10", s:"n3",  t:"n9",  kind:"IMPACTS"},       // משימה א → גבעתיים א
+  {id:"e11", s:"n9",  t:"n3",  kind:"IMPACTS"},       // גבעתיים א → משימה א
+];
+
+// ── CONFIG ────────────────────────────────────────────────────
+const ST = {
+  active:  {label:"תקין",  c:"#15803D", bg:"#F0FDF4", bd:"#86EFAC", dot:"#22C55E", Icon:CheckCircle},
+  warning: {label:"תקלה", c:"#B45309", bg:"#FFFBEB", bd:"#FCD34D", dot:"#F59E0B", Icon:AlertTriangle},
+  failed:  {label:"כשל",  c:"#DC2626", bg:"#FEF2F2", bd:"#FECACA", dot:"#EF4444", Icon:XCircle},
+};
+const ECFG = {
+  DEPENDENCY:  {color:"#6366F1", dash:"none", label:"תלות",  w:2.2},
+  ALTERNATIVE: {color:"#F59E0B", dash:"7,4",  label:"חלופה", w:2.0},
+  IMPACTS:     {color:"#EF4444", dash:"4,3",  label:"השפעה", w:1.8},
+};
+
+// ── HELPERS ───────────────────────────────────────────────────
+function Badge({status, small}){
+  const s=ST[status]; const Icon=s.Icon;
+  return(
+    <span style={{display:"inline-flex",alignItems:"center",gap:4,background:s.bg,color:s.c,
+      border:`1px solid ${s.bd}`,borderRadius:20,padding:small?"2px 8px":"3px 10px",
+      fontSize:small?10:11,fontWeight:700,whiteSpace:"nowrap",flexShrink:0}}>
+      <Icon size={small?10:12}/>{s.label}
+    </span>
+  );
+}
+
+function Ring({score,c,size=54}){
+  const r=(size/2)-5, ci=2*Math.PI*r;
+  return(
+    <svg width={size} height={size} style={{flexShrink:0}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="#F1F5F9" strokeWidth="5"/>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke={c} strokeWidth="5"
+        strokeDasharray={`${(score/100)*ci} ${ci}`} strokeDashoffset={ci*.25} strokeLinecap="round"/>
+      <text x={size/2} y={size/2+5} textAnchor="middle" fontSize="13" fontWeight="800" fill={c}
+        fontFamily="'Heebo',sans-serif">{score}</text>
+    </svg>
+  );
+}
+
+function SecHead({icon:Icon, label, c="#6366F1", bg="#EEF2FF"}){
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:8,flexShrink:0}}>
+      <div style={{width:24,height:24,borderRadius:7,background:bg,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <Icon size={13} color={c}/>
+      </div>
+      <span style={{fontSize:12,fontWeight:700,color:"#1E293B"}}>{label}</span>
+    </div>
+  );
+}
+
+function Panel({children, style={}}){
+  return(
+    <div style={{background:"white",borderRadius:12,border:"1px solid #E5E7EB",
+      padding:"11px 13px",boxShadow:"0 1px 3px rgba(0,0,0,.05)",...style}}>
+      {children}
+    </div>
+  );
+}
+
+// ── GEO MAP ───────────────────────────────────────────────────
+function GeoMap({selected, onSelect, filters}){
+  const VW=420, VH=440;
+  const mapNodes = NODES.filter(n=>n.onMap);
+
+  const visEdges = EDGES.filter(e=>{
+    if(!filters[e.kind.toLowerCase()]) return false;
+    const sn=NODES.find(n=>n.id===e.s), tn=NODES.find(n=>n.id===e.t);
+    return sn?.onMap && tn?.onMap;
+  });
+
+  const connectedIds = new Set(visEdges.flatMap(e=>[e.s,e.t]));
+  const visNodes = mapNodes.filter(n=> n.id===selected?.id || connectedIds.has(n.id));
+
+  return(
+    <svg width="100%" height="100%" viewBox={`0 0 ${VW} ${VH}`} style={{display:"block",background:"#EFF6FF"}}>
+      <defs>
+        <linearGradient id="mbg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#EFF6FF"/><stop offset="100%" stopColor="#F0FDF4"/>
+        </linearGradient>
+        {Object.entries(ECFG).map(([k,v])=>(
+          <marker key={k} id={`gm-${k}`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L0,7 L7,3.5z" fill={v.color} opacity=".9"/>
+          </marker>
+        ))}
+      </defs>
+      <rect width={VW} height={VH} fill="url(#mbg)"/>
+      <path d="M0,0 Q35,100 22,264 Q10,374 0,440Z" fill="#BFDBFE" opacity=".45"/>
+      <path d="M0,118 Q176,98 210,118 Q306,138 420,113" fill="none" stroke="#DDE3ED" strokeWidth="5"/>
+      <path d="M210,0 Q193,120 210,200 Q227,280 210,440" fill="none" stroke="#DDE3ED" strokeWidth="3"/>
+      <path d="M0,185 Q160,170 252,160 Q328,150 420,185" fill="none" stroke="#DDE3ED" strokeWidth="2.5"/>
+      {[["תל אביב",45,42],["רמת גן / גבעתיים",160,88],["גוש דן",280,185]].map(([n,x,y])=>(
+        <text key={n} x={x} y={y} fontSize="9" fill="#B0BCCF" fontFamily="'Heebo',sans-serif">{n}</text>
+      ))}
+
+      {visEdges.map((e,i)=>{
+        const a=NODES.find(n=>n.id===e.s), b=NODES.find(n=>n.id===e.t);
+        if(!a||!b) return null;
+        const ec=ECFG[e.kind];
+        const sx=a.lng*(VW/420), sy=a.lat*(VH/440);
+        const tx=b.lng*(VW/420), ty=b.lat*(VH/440);
+        const dx=tx-sx, dy=ty-sy, len=Math.sqrt(dx*dx+dy*dy);
+        const nx=dx/len, ny=dy/len;
+        return(
+          <line key={i} x1={sx} y1={sy} x2={tx-nx*19} y2={ty-ny*19}
+            stroke={ec.color} strokeWidth={ec.w} strokeDasharray={ec.dash}
+            markerEnd={`url(#gm-${e.kind})`} opacity=".85"/>
+        );
+      })}
+
+      {visNodes.map(nd=>{
+        const s=ST[nd.status], isSel=selected?.id===nd.id;
+        const x=nd.lng*(VW/420), y=nd.lat*(VH/440), nr=13;
+        return(
+          <g key={nd.id} onClick={()=>onSelect(nd)} style={{cursor:"pointer"}}>
+            {isSel&&<circle cx={x} cy={y} r={nr+9} fill={s.bg} stroke={s.bd} strokeWidth="1.5" opacity=".85"/>}
+            <circle cx={x} cy={y} r={nr} fill="white" stroke={s.c} strokeWidth={isSel?2.5:1.5}
+              style={{filter:isSel?"drop-shadow(0 2px 10px rgba(0,0,0,.2))":"drop-shadow(0 1px 3px rgba(0,0,0,.1))"}}/>
+            <circle cx={x} cy={y} r={5} fill={s.dot}/>
+            <rect x={x+nr+3} y={y-9} width={nd.label.length*7+6} height="17" rx="5"
+              fill="white" stroke={isSel?s.c:"#E5E7EB"} strokeWidth={isSel?1.2:.7} opacity=".96"/>
+            <text x={x+nr+7} y={y+3} fontSize="9.5" fill={isSel?s.c:"#374151"}
+              fontFamily="'Heebo',sans-serif" fontWeight={isSel?"700":"500"}>{nd.label}</text>
+          </g>
+        );
+      })}
+
+      <g transform={`translate(8,${VH-18})`}>
+        {Object.entries(ECFG).map(([k,v],i)=>(
+          <g key={k} transform={`translate(${i*110},0)`}>
+            <line x1="0" y1="0" x2="14" y2="0" stroke={filters[k.toLowerCase()]?v.color:"#D1D5DB"}
+              strokeWidth="2" strokeDasharray={v.dash}/>
+            <text x="17" y="4" fontSize="8" fill={filters[k.toLowerCase()]?"#6B7280":"#CBD5E1"}
+              fontFamily="'Heebo',sans-serif">{v.label}</text>
+          </g>
+        ))}
+      </g>
+    </svg>
+  );
+}
+
+// ── RELATIONSHIP MAP ──────────────────────────────────────────
+// Row layout: deps row → alts row → [CENTER] → impacts row → depth2 row
+// Each row is computed, viewBox is derived from actual content — nothing clips.
+function RelMap({sel}){
+  if(!sel) return(
+    <div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",
+      color:"#9CA3AF",fontSize:12,background:"#F9FAFB",borderRadius:10}}>
+      בחר NODE לצפייה בקישורים
+    </div>
+  );
+
+  const CR = 20;  // center radius
+  const NR = 14;  // normal radius
+  const PAD = 36; // label padding below node
+  const HGAP = 62; // horizontal gap between nodes in a row
+  const VGAP = 80; // vertical gap between rows
+  const SIDE_PAD = 40; // left/right padding
+
+  const deps  = EDGES.filter(e=>e.t===sel.id&&e.kind==="DEPENDENCY").map(e=>NODES.find(n=>n.id===e.s)).filter(Boolean);
+  const alts  = EDGES.filter(e=>(e.s===sel.id||e.t===sel.id)&&e.kind==="ALTERNATIVE").map(e=>NODES.find(n=>n.id===(e.s===sel.id?e.t:e.s))).filter(Boolean);
+  const imps  = EDGES.filter(e=>e.s===sel.id&&e.kind==="IMPACTS").map(e=>NODES.find(n=>n.id===e.t)).filter(Boolean);
+  const depth2= imps.flatMap(d=>
+    EDGES.filter(e=>e.s===d.id&&e.kind==="IMPACTS").map(e=>({from:d,node:NODES.find(n=>n.id===e.t)})).filter(x=>x.node)
+  );
+
+  // compute width needed for each row
+  const rowW = (count) => Math.max(count,1)*HGAP + (count-1)*0;
+  const allCounts = [deps.length, alts.length, 1, imps.length, depth2.length].filter(c=>c>0);
+  const W = Math.max(...allCounts)*HGAP + SIDE_PAD*2;
+
+  // row Y positions
+  let rows = [];
+  let y = PAD;
+  if(deps.length)   { rows.push({type:"dep",  y}); y+=VGAP; }
+  if(alts.length)   { rows.push({type:"alt",  y}); y+=VGAP; }
+                      rows.push({type:"center",y}); y+=VGAP;
+  if(imps.length)   { rows.push({type:"imp",  y}); y+=VGAP; }
+  if(depth2.length) { rows.push({type:"d2",   y}); y+=VGAP; }
+  const H = y + PAD;
+
+  const rowY = (type) => rows.find(r=>r.type===type)?.y ?? 0;
+
+  // horizontal positions for a row of N items centered in W
+  const rowXs = (count) => {
+    if(count===0) return [];
+    const total = (count-1)*HGAP;
+    const startX = W/2 - total/2;
+    return Array.from({length:count},(_,i)=>startX+i*HGAP);
+  };
+
+  const depXs  = rowXs(deps.length);
+  const altXs  = rowXs(alts.length);
+  const impXs  = rowXs(imps.length);
+  const cx     = W/2;
+  const cy     = rowY("center");
+
+  // depth2: grouped under their parent imp node
+  const d2Positions = depth2.map(({from,node},i)=>{
+    const fi   = imps.findIndex(d=>d.id===from.id);
+    const fpx  = impXs[fi] ?? cx;
+    const sf   = depth2.filter(x=>x.from.id===from.id);
+    const idx  = sf.findIndex(x=>x.node.id===node.id);
+    const x    = fpx + (idx-(sf.length-1)/2)*HGAP;
+    return {x, y:rowY("d2"), from, node};
+  });
+
+  function line(x1,y1,x2,y2,r1,r2,color,dash,mend){
+    const dx=x2-x1,dy=y2-y1,len=Math.sqrt(dx*dx+dy*dy);
+    if(len<1) return null;
+    const nx=dx/len,ny=dy/len;
+    return <line x1={x1+nx*r1} y1={y1+ny*r1} x2={x2-nx*(r2+6)} y2={y2-ny*(r2+6)}
+      stroke={color} strokeWidth="1.8" strokeDasharray={dash||"none"} markerEnd={mend}/>;
+  }
+
+  function NodeCircle({nd, x, y, r}){
+    const s   = ST[nd.status];
+    const dot = nd.effortColor||s.dot;
+    const str = nd.effortColor||s.c;
+    const isC = r===CR;
+    return(
+      <g>
+        <circle cx={x} cy={y} r={r+6} fill={nd.effortColor?`${nd.effortColor}0D`:s.bg} opacity=".7"/>
+        <circle cx={x} cy={y} r={r} fill="white" stroke={str} strokeWidth={isC?2.5:1.8}
+          style={{filter:`drop-shadow(0 ${isC?3:1}px ${isC?10:4}px rgba(0,0,0,${isC?.15:.1}))`}}/>
+        <circle cx={x} cy={y} r={isC?7:4.5} fill={dot}/>
+        <text x={x} y={y+r+13} textAnchor="middle" fontSize={isC?10:9}
+          fill={isC?"#1E293B":"#374151"} fontFamily="'Heebo',sans-serif" fontWeight={isC?"700":"500"}>
+          {nd.short}
+        </text>
+      </g>
+    );
+  }
+
+  return(
+    <div style={{width:"100%",height:"100%",background:"#F9FAFB",overflow:"hidden"}}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid meet" style={{display:"block"}}>
+        <defs>
+          {[["ri","#EF4444"],["rd","#6366F1"],["ra","#F59E0B"]].map(([id,c])=>(
+            <marker key={id} id={`rr-${id}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3z" fill={c}/>
+            </marker>
+          ))}
+        </defs>
+        <rect width={W} height={H} fill="#F9FAFB"/>
+
+        {/* ── LINES ── */}
+        {deps.map((nd,i)=>line(depXs[i],rowY("dep"),cx,cy,NR,CR,"#6366F1","none","url(#rr-rd)"))}
+        {alts.map((nd,i)=>line(altXs[i],rowY("alt"),cx,cy,NR,CR,"#F59E0B","5,3","url(#rr-ra)"))}
+        {imps.map((nd,i)=>line(cx,cy,impXs[i],rowY("imp"),CR,NR,"#EF4444","none","url(#rr-ri)"))}
+        {d2Positions.map(({from,node,x,y},i)=>{
+          const fi=imps.findIndex(d=>d.id===from.id);
+          const fpx=impXs[fi]??cx;
+          return line(fpx,rowY("imp"),x,y,NR,NR,"#EF4444","4,3","url(#rr-ri)");
+        })}
+
+        {/* ── NODES ── */}
+        {deps.map((nd,i)=><NodeCircle key={`dep${i}`} nd={nd} x={depXs[i]} y={rowY("dep")} r={NR}/>)}
+        {alts.map((nd,i)=><NodeCircle key={`alt${i}`} nd={nd} x={altXs[i]} y={rowY("alt")} r={NR}/>)}
+        <NodeCircle nd={sel} x={cx} y={cy} r={CR}/>
+        {imps.map((nd,i)=><NodeCircle key={`imp${i}`} nd={nd} x={impXs[i]} y={rowY("imp")} r={NR}/>)}
+        {d2Positions.map(({node,x,y},i)=><NodeCircle key={`d2-${i}`} nd={node} x={x} y={y} r={NR}/>)}
+
+        {/* ── ROW LABELS ── */}
+        {deps.length>0  && <text x={W-4} y={rowY("dep")+4}  textAnchor="end" fontSize="8" fill="#6366F1" opacity=".55" fontFamily="'Heebo',sans-serif">תלות</text>}
+        {alts.length>0  && <text x={W-4} y={rowY("alt")+4}  textAnchor="end" fontSize="8" fill="#F59E0B" opacity=".55" fontFamily="'Heebo',sans-serif">חלופות</text>}
+        {imps.length>0  && <text x={W-4} y={rowY("imp")+4}  textAnchor="end" fontSize="8" fill="#EF4444" opacity=".55" fontFamily="'Heebo',sans-serif">השפעה</text>}
+        {depth2.length>0&& <text x={W-4} y={rowY("d2")+4}   textAnchor="end" fontSize="8" fill="#EF4444" opacity=".4"  fontFamily="'Heebo',sans-serif">השפעה עקיפה</text>}
+      </svg>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+export default function App(){
+  const [sel,    setSel]    = useState(null);
+  const [filters,setFilters]= useState({dependency:true,alternative:true,impacts:true});
+  const [repTxt, setRepTxt] = useState("");
+  const [sent,   setSent]   = useState(false);
+  const [typeF,  setTypeF]  = useState("all");
+
+  const s = sel ? ST[sel.status] : null;
+  const send=()=>{if(repTxt.trim()){setSent(true);setTimeout(()=>{setSent(false);setRepTxt("");},2000);}};
+  const toggleF=k=>setFilters(f=>({...f,[k]:!f[k]}));
+
+  // collect all recursively impacted nodes (for chips)
+  const impactChips = sel ? (()=>{
+    const visited=new Set(), res=[];
+    const dfs=id=>{EDGES.filter(e=>e.s===id&&e.kind==="IMPACTS").forEach(e=>{
+      if(!visited.has(e.t)){visited.add(e.t);const nd=NODES.find(n=>n.id===e.t);if(nd)res.push(nd);dfs(e.t);}
+    });};
+    dfs(sel.id); return res;
+  })() : [];
+
+  const FilterBar=(
+    <div style={{background:"white",borderBottom:"1px solid #E2E8F0",padding:"8px 16px",
+      display:"flex",gap:7,alignItems:"center",flexShrink:0,flexWrap:"wrap"}}>
+      <Filter size={12} color="#6366F1"/>
+      <span style={{fontSize:11,color:"#6B7280",fontWeight:700}}>קשרים:</span>
+      {[{k:"dependency",l:"תלות",c:"#6366F1",dash:"none"},
+        {k:"alternative",l:"חלופה",c:"#F59E0B",dash:"7,3"},
+        {k:"impacts",l:"השפעה",c:"#EF4444",dash:"4,2"}].map(({k,l,c,dash})=>(
+        <button key={k} onClick={()=>toggleF(k)} style={{
+          padding:"4px 12px",borderRadius:16,fontSize:11,fontWeight:600,cursor:"pointer",
+          background:filters[k]?`${c}14`:"#F8FAFC",color:filters[k]?c:"#94A3B8",
+          border:`1.5px solid ${filters[k]?c:"#E2E8F0"}`,
+          display:"flex",alignItems:"center",gap:6,transition:"all .14s"}}>
+          <svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2"
+            stroke={filters[k]?c:"#CBD5E1"} strokeWidth="2" strokeDasharray={dash}/></svg>{l}
+        </button>
+      ))}
+      <div style={{width:1,height:20,background:"#E2E8F0",margin:"0 2px"}}/>
+      <span style={{fontSize:11,color:"#6B7280",fontWeight:700}}>סוג:</span>
+      {[{id:"all",l:"הכל"},{id:"A",l:"A"},{id:"B",l:"תחנות"},{id:"C",l:"מאמצים"}].map(t=>(
+        <button key={t.id} onClick={()=>setTypeF(t.id)} style={{
+          padding:"4px 11px",borderRadius:16,fontSize:11,fontWeight:600,cursor:"pointer",
+          background:typeF===t.id?"#6366F1":"#F8FAFC",
+          color:typeF===t.id?"white":"#6B7280",
+          border:`1.5px solid ${typeF===t.id?"#6366F1":"#E2E8F0"}`,transition:"all .14s"}}>{t.l}</button>
+      ))}
+      {sel&&<button onClick={()=>setSel(null)} style={{marginRight:"auto",background:"#F8FAFC",
+        border:"1px solid #E2E8F0",borderRadius:8,padding:"4px 10px",fontSize:11,color:"#6B7280",
+        display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}><X size={11}/>חזור למפה מלאה</button>}
+      {!sel&&<div style={{marginRight:"auto",fontSize:11,color:"#94A3B8",display:"flex",alignItems:"center",gap:5}}><MapPin size={11}/>לחץ על NODE לפרטים</div>}
+    </div>
+  );
+
+  return(
+    <div dir="rtl" style={{height:"100vh",background:"#F1F5F9",fontFamily:"'Heebo','Assistant',sans-serif",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0}
+        button{font-family:inherit;cursor:pointer}textarea{font-family:inherit}
+        ::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-thumb{background:#CBD5E1;border-radius:4px}
+        .hvr{transition:all .14s}.hvr:hover{filter:brightness(.95)}
+        .srow:hover{background:#F8FAFC}
+      `}</style>
+
+      {/* TOPBAR */}
+      <div style={{background:"white",borderBottom:"1px solid #E2E8F0",padding:"0 18px",height:50,
+        display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:11}}>
+          <div style={{width:32,height:32,borderRadius:9,background:"#EEF2FF",display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <Shield size={16} color="#6366F1"/>
+          </div>
+          <div>
+            <div style={{fontSize:14,fontWeight:800,color:"#1E293B"}}>מערכת ניהול תלויות</div>
+            <div style={{fontSize:9,color:"#94A3B8"}}>Dependency Management System</div>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          {[{l:"תקינים",v:NODES.filter(n=>n.status==="active").length,c:"#15803D",bg:"#F0FDF4",bd:"#BBF7D0"},
+            {l:"תקלה",  v:NODES.filter(n=>n.status==="warning").length,c:"#B45309",bg:"#FFFBEB",bd:"#FDE68A"},
+            {l:"כשל",   v:NODES.filter(n=>n.status==="failed").length,c:"#DC2626",bg:"#FEF2F2",bd:"#FECACA"}].map(({l,v,c,bg,bd})=>(
+            <div key={l} style={{background:bg,border:`1px solid ${bd}`,borderRadius:18,padding:"2px 11px",display:"flex",gap:5,alignItems:"center"}}>
+              <span style={{fontSize:15,fontWeight:800,color:c,lineHeight:1}}>{v}</span>
+              <span style={{fontSize:10,fontWeight:600,color:c}}>{l}</span>
+            </div>
+          ))}
+          <div style={{fontSize:10,color:"#94A3B8",display:"flex",alignItems:"center",gap:3}}>
+            <Clock size={11}/>{new Date().toLocaleTimeString("he-IL")}
+          </div>
+        </div>
+      </div>
+
+      {FilterBar}
+
+      {/* BODY */}
+      {!sel ? (
+        <div style={{flex:1,overflow:"hidden"}}>
+          <GeoMap selected={null} onSelect={setSel} filters={filters}/>
+        </div>
+      ) : (
+        <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr 1fr",overflow:"hidden"}}>
+
+          {/* ═══ LEFT: תז + טיפול + דיווח ═══ */}
+          <div style={{borderLeft:"1px solid #E2E8F0",overflow:"auto",padding:"10px",display:"flex",flexDirection:"column",gap:9}}>
+
+            <Panel>
+              <SecHead icon={FileText} label={`תעודת זהות — ${sel.label}`} c="#6366F1" bg="#EEF2FF"/>
+              <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                <Ring score={sel.score} c={s.c} size={52}/>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:5}}>
+                    <div style={{fontSize:14,fontWeight:800,color:"#1E293B"}}>{sel.label}</div>
+                    <Badge status={sel.status} small/>
+                  </div>
+                  <div style={{fontSize:11,color:"#64748B",lineHeight:1.55,marginBottom:6}}>{sel.description}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"5px 12px"}}>
+                    {[["סוג",`סוג ${sel.type}`],["אזור",sel.zone],["בעלים",sel.owner],["קואורד׳",sel.coords]].map(([k,v])=>(
+                      <div key={k} style={{fontSize:10,padding:"3px 0",borderBottom:"1px solid #F8FAFC"}}>
+                        <span style={{color:"#94A3B8"}}>{k}: </span>
+                        <span style={{color:"#374151",fontWeight:700}}>{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </Panel>
+
+            <Panel>
+              <SecHead icon={Wrench} label="טיפול אם לא תקין" c="#6366F1" bg="#EEF2FF"/>
+              {sel.steps.length===0
+                ? <div style={{fontSize:11,color:"#9CA3AF",textAlign:"center",padding:"6px 0"}}>אין נוהל מוגדר</div>
+                : sel.steps.map((step,i)=>(
+                  <div key={i} className="srow" style={{display:"flex",gap:8,alignItems:"flex-start",
+                    padding:"5px",borderRadius:7,transition:"background .1s"}}>
+                    <div style={{flexShrink:0,width:18,height:18,borderRadius:"50%",background:"#EEF2FF",
+                      color:"#6366F1",fontSize:10,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>{i+1}</div>
+                    <span style={{fontSize:11,color:"#374151",lineHeight:1.5}}>{step}</span>
+                  </div>
+                ))
+              }
+            </Panel>
+
+            <Panel style={{flex:1}}>
+              <SecHead icon={AlertCircle} label="דיווח תקלה" c="#DC2626" bg="#FEF2F2"/>
+              {sel.incidents.map((inc,i)=>(
+                <div key={i} className="srow" style={{display:"flex",gap:8,padding:"6px 4px",
+                  borderBottom:i<sel.incidents.length-1?"1px solid #F1F5F9":"none 0 0 10px",borderRadius:6,marginBottom:8}}>
+                  <div style={{width:26,height:26,borderRadius:7,flexShrink:0,
+                    background:inc.status==="בטיפול"?"#FFFBEB":"#F0FDF4",
+                    display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {inc.status==="בטיפול"?<AlertTriangle size={13} color="#D97706"/>:<CheckCircle size={13} color="#15803D"/>}
+                  </div>
+                  <div style={{flex:1}}>
+                    <div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}>
+                      <span style={{fontSize:11,fontWeight:700,color:"#1E293B"}}>{inc.reporter}</span>
+                      <span style={{fontSize:9,color:"#94A3B8"}}>{inc.date}</span>
+                    </div>
+                    <div style={{fontSize:10,color:"#64748B"}}>{inc.desc}</div>
+                  </div>
+                </div>
+              ))}
+              {sent
+                ? <div style={{display:"flex",alignItems:"center",gap:6,color:"#15803D",fontSize:12,fontWeight:600,padding:"4px 0"}}>
+                    <CheckCircle size={14}/>נשלח בהצלחה!
+                  </div>
+                : <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <textarea value={repTxt} onChange={e=>setRepTxt(e.target.value)} rows={2}
+                      placeholder={`תאר את הבעיה ב${sel.label}...`}
+                      style={{borderRadius:8,border:"1px solid #E5E7EB",padding:"7px 10px",
+                        fontSize:11,resize:"none",outline:"none",background:"#F9FAFB",width:"100%"}}/>
+                    <button onClick={send} className="hvr" style={{
+                      background:"#DC2626",color:"white",border:"none",borderRadius:8,
+                      padding:"8px",fontSize:12,fontWeight:700,width:"100%"}}>שלח דיווח</button>
+                  </div>
+              }
+            </Panel>
+          </div>
+
+          {/* ═══ MIDDLE: השפעות (⅓) + מפת קישורים (⅔) ═══ */}
+          <div style={{borderLeft:"1px solid #E2E8F0",overflow:"hidden",display:"flex",flexDirection:"column",padding:"10px",gap:9}}>
+
+            {/* השפעות */}
+            <Panel style={{flexShrink:0}}>
+              <SecHead icon={Zap} label="השפעות" c="#D97706" bg="#FEF9C3"/>
+              {sel.impacts.length===0&&sel.alternatives.length===0
+                ? <div style={{fontSize:11,color:"#9CA3AF",textAlign:"center",padding:"4px 0"}}>אין השפעות מוגדרות</div>
+                : <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                    {sel.impacts.length>0&&<>
+                      <div style={{fontSize:10,color:"#6B7280",fontWeight:600}}>השפעה ישירה:</div>
+                      {sel.impacts.map((im,i)=>(
+                        <div key={i} style={{background:"#FFFBEB",border:"1px solid #FDE68A",borderRadius:8,
+                          padding:"5px 10px",fontSize:11,color:"#92400E",fontWeight:600,
+                          display:"flex",alignItems:"center",gap:6}}>
+                          <div style={{width:6,height:6,borderRadius:"50%",background:"#F59E0B",flexShrink:0}}/>{im}
+                        </div>
+                      ))}
+                    </>}
+                    {sel.alternatives.length>0&&(
+                      <div style={{padding:"5px 10px",background:"#F0FDF4",border:"1px solid #BBF7D0",borderRadius:8}}>
+                        <div style={{fontSize:9,color:"#15803D",fontWeight:700,marginBottom:2}}>✓ חלופות זמינות</div>
+                        <div style={{fontSize:11,color:"#166534"}}>{sel.alternatives.join(" | ")}</div>
+                      </div>
+                    )}
+                    {impactChips.filter(n=>n.type==="C").length>0&&(
+                      <div>
+                        <div style={{fontSize:10,color:"#94A3B8",fontWeight:600,marginBottom:4}}>מאמצים מושפעים:</div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+                          {impactChips.filter(n=>n.type==="C").map(nd=>(
+                            <span key={nd.id} style={{display:"inline-flex",alignItems:"center",gap:5,
+                              background:`${nd.effortColor}14`,color:nd.effortColor,
+                              border:`1px solid ${nd.effortColor}44`,
+                              borderRadius:20,padding:"3px 10px",fontSize:10,fontWeight:700}}>
+                              <Package size={9}/>{nd.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+              }
+            </Panel>
+
+            {/* מפת קישורים — grows to fill remaining space */}
+            <div style={{flex:1,background:"white",borderRadius:12,border:"1px solid #E5E7EB",
+              overflow:"hidden",display:"flex",flexDirection:"column",minHeight:0,
+              boxShadow:"0 1px 3px rgba(0,0,0,.05)"}}>
+              <div style={{padding:"9px 13px 5px",borderBottom:"1px solid #F3F4F6",flexShrink:0}}>
+                <SecHead icon={Activity} label="מפת קישורים" c="#15803D" bg="#F0FDF4"/>
+              </div>
+              <div style={{flex:1,minHeight:0,overflow:"hidden"}}>
+                <RelMap sel={sel}/>
+              </div>
+            </div>
+          </div>
+
+          {/* ═══ RIGHT: MAP ═══ */}
+          <div style={{overflow:"hidden"}}>
+            <GeoMap selected={sel} onSelect={setSel} filters={filters}/>
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+}
