@@ -215,47 +215,64 @@ def fetch_graph_overview(driver: Driver, database: str | None = None) -> dict[st
         ) from exc
 
 
-def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None = None) -> list[dict[str, Any]]:
-    query = '''
+def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None = None) -> dict[str, Any]:
+    nodes_query = '''
     MATCH (n)
     WHERE any(label IN labels(n) WHERE label IN ['Site', 'Infrastrcture'])
-    OPTIONAL MATCH (n)-[r]-(m)
-    WITH n, collect(
-      CASE
-        WHEN r IS NULL THEN NULL
-        ELSE {
-          relationship_type: type(r),
-          direction: CASE WHEN startNode(r) = n THEN 'OUTGOING' ELSE 'INCOMING' END,
-          other_node: {
-            id: m.id,
-            labels: labels(m),
-            properties: properties(m)
-          },
-          relationship_properties: properties(r)
-        }
-      END
-    ) AS raw_links
     RETURN
       n.id AS node_id,
-      labels(n) AS node_labels,
+      CASE
+        WHEN 'Site' IN labels(n) THEN 'Site'
+        ELSE 'Infrastrcture'
+      END AS node_type,
       n.name AS node_name,
-      n.polygon AS node_polygon,
-      [link IN raw_links WHERE link IS NOT NULL] AS links
+      n.polygon AS node_polygon
     ORDER BY coalesce(n.name, n.id, '')
+    '''
+
+    edges_query = '''
+    CALL {
+      MATCH (a)-[r]-(b)
+      WHERE any(label IN labels(a) WHERE label IN ['Site', 'Infrastrcture'])
+        AND any(label IN labels(b) WHERE label IN ['Site', 'Infrastrcture'])
+      RETURN DISTINCT
+        startNode(r).id AS source_id,
+        endNode(r).id AS target_id,
+        type(r) AS relationship_type
+
+      UNION
+
+      MATCH (s1:Site)<-[:INTERCHANGEABLE]-(c:Componenet)-[:INTERCHANGEABLE]->(s2:Site)
+      WHERE s1.id < s2.id
+      RETURN DISTINCT
+        s1.id AS source_id,
+        s2.id AS target_id,
+        'INTERCHANGEABLE' AS relationship_type
+    }
+    RETURN DISTINCT source_id, target_id, relationship_type
+    ORDER BY relationship_type, source_id, target_id
     '''
 
     try:
         with driver.session(database=database) if database else driver.session() as session:
-            return [
+            nodes = [
                 {
                     'id': record['node_id'],
-                    'labels': record['node_labels'] or [],
+                    'node_type': record['node_type'],
                     'name': record['node_name'],
                     'polygon': record['node_polygon'],
-                    'links': _to_json_compatible(record['links'] or []),
                 }
-                for record in session.run(query)
+                for record in session.run(nodes_query)
             ]
+            edges = [
+                {
+                    'source_id': record['source_id'],
+                    'target_id': record['target_id'],
+                    'relationship_type': record['relationship_type'],
+                }
+                for record in session.run(edges_query)
+            ]
+            return {'nodes': _to_json_compatible(nodes), 'edges': _to_json_compatible(edges)}
     except Neo4jError as exc:
         raise DatabaseError(
             message=str(exc) or 'Failed to query Site/Infrastrcture links from Neo4j.',
@@ -460,6 +477,110 @@ def fetch_node_details(driver: Driver, node_id: str, database: str | None = None
             message=str(exc) or 'Failed to query node details from Neo4j.',
             details={
                 'node_id': node_id,
+                'database': database,
+                'neo4j_error': str(exc),
+                'neo4j_code': getattr(exc, 'code', None),
+            },
+        ) from exc
+
+
+def fetch_node_links_map(
+    driver: Driver,
+    node_id: str,
+    direction: str = 'BOTH',
+    depth: int | None = None,
+    database: str | None = None,
+) -> dict[str, Any]:
+    node_query = '''
+    MATCH (n {id: $node_id})
+    RETURN n.id AS node_id, labels(n) AS node_labels, properties(n) AS node_properties
+    LIMIT 1
+    '''
+
+    if direction == 'INCOMING':
+        path_pattern = '(n {id: $node_id})<-[*1..DEPTH]-(m)'
+    elif direction == 'OUTGOING':
+        path_pattern = '(n {id: $node_id})-[*1..DEPTH]->(m)'
+    else:
+        path_pattern = '(n {id: $node_id})-[*1..DEPTH]-(m)'
+
+    depth_suffix = '' if depth is None else str(max(1, depth))
+    path_pattern = path_pattern.replace('DEPTH', depth_suffix)
+
+    direction_nodes_query = f'''
+    MATCH p={path_pattern}
+    UNWIND nodes(p) AS path_node
+    WITH DISTINCT path_node
+    WHERE path_node.id <> $node_id
+    RETURN
+      path_node.id AS node_id,
+      labels(path_node) AS node_labels,
+      properties(path_node) AS node_properties
+    '''
+
+    direction_edges_query = f'''
+    MATCH p={path_pattern}
+    UNWIND relationships(p) AS rel
+    RETURN DISTINCT
+      startNode(rel).id AS source_id,
+      endNode(rel).id AS target_id,
+      type(rel) AS relationship_type,
+      properties(rel) AS relationship_properties
+    ORDER BY relationship_type, source_id, target_id
+    '''
+
+    try:
+        with driver.session(database=database) if database else driver.session() as session:
+            node_record = session.run(node_query, node_id=node_id).single()
+            if node_record is None:
+                raise NotFoundError(
+                    message=f'Node with id "{node_id}" was not found.',
+                    details={'node_id': node_id},
+                )
+
+            node_payload = {
+                'id': node_record['node_id'],
+                'labels': node_record['node_labels'] or [],
+                'properties': _to_json_compatible(node_record['node_properties'] or {}),
+            }
+
+            direction_nodes = [
+                {
+                    'id': record['node_id'],
+                    'labels': record['node_labels'] or [],
+                    'properties': _to_json_compatible(record['node_properties'] or {}),
+                }
+                for record in session.run(direction_nodes_query, node_id=node_id)
+            ]
+
+            direction_edges = [
+                {
+                    'source_id': record['source_id'],
+                    'target_id': record['target_id'],
+                    'relationship_type': record['relationship_type'],
+                    'relationship_properties': _to_json_compatible(record['relationship_properties'] or {}),
+                }
+                for record in session.run(direction_edges_query, node_id=node_id)
+            ]
+
+            return {
+                'node': node_payload,
+                'links_map': {
+                    'direction': direction,
+                    'depth': depth,
+                    'nodes': direction_nodes,
+                    'edges': direction_edges,
+                },
+            }
+    except NotFoundError:
+        raise
+    except Neo4jError as exc:
+        raise DatabaseError(
+            message=str(exc) or 'Failed to query node links map from Neo4j.',
+            details={
+                'node_id': node_id,
+                'direction': direction,
+                'depth': depth,
                 'database': database,
                 'neo4j_error': str(exc),
                 'neo4j_code': getattr(exc, 'code', None),

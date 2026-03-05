@@ -9,7 +9,10 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
+from swagger_ui_bundle import swagger_ui_path
 
 from app.config import get_settings
 from app.db.neo4j import Neo4jDriver, check_neo4j_ready
@@ -43,14 +46,11 @@ async def lifespan(_: FastAPI):
         logger.info('Neo4j driver closed')
 
 
-docs_enabled = settings.app_env != 'production'
+docs_enabled = settings.app_enable_docs
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
-    lifespan=lifespan,
-    docs_url='/docs' if docs_enabled else None,
-    redoc_url='/redoc' if docs_enabled else None,
-    openapi_url='/openapi.json' if docs_enabled else None,
+    lifespan=lifespan
 )
 app.include_router(graph_router)
 app.include_router(nodes_router)
@@ -67,6 +67,21 @@ if settings.cors_origins:
 
 if settings.trusted_hosts:
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
+
+if docs_enabled:
+    app.mount('/_docs_static', StaticFiles(directory=swagger_ui_path), name='docs_static')
+
+
+if docs_enabled:
+    @app.get('/docs', include_in_schema=False)
+    async def custom_swagger_ui() -> Response:
+        return get_swagger_ui_html(
+            openapi_url=app.openapi_url or '/openapi.json',
+            title=f'{settings.app_name} - Swagger UI',
+            swagger_js_url='/_docs_static/swagger-ui-bundle.js',
+            swagger_css_url='/_docs_static/swagger-ui.css',
+            swagger_favicon_url='/_docs_static/favicon-32x32.png',
+        )
 
 
 @app.middleware('http')

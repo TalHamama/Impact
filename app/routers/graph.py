@@ -14,8 +14,14 @@ logger = logging.getLogger(__name__)
 @router.get('/sites-infrastructures/links', response_model=SitesInfrastructuresLinksResponse)
 async def get_sites_infrastructures_links(driver: Driver = Depends(get_neo4j_driver)) -> SitesInfrastructuresLinksResponse:
     settings = get_settings()
-    items = fetch_sites_infrastructures_with_links(driver=driver, database=settings.neo4j_database)
+    graph = fetch_sites_infrastructures_with_links(driver=driver, database=settings.neo4j_database)
 
-    logger.info('Fetched Site/Infrastrcture links', extra={'count': len(items)})
+    logger.info(
+        'Fetched Site/Infrastrcture graph',
+        extra={
+            'nodes_count': len(graph.get('nodes', [])),
+            'edges_count': len(graph.get('edges', [])),
+        },
+    )
 
-    return SitesInfrastructuresLinksResponse(count=len(items), items=items)
+    return SitesInfrastructuresLinksResponse(**graph)

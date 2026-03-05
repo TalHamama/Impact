@@ -30,21 +30,19 @@ class RelationTypesResponse(BaseModel):
     relation_types: list[str] = Field(default_factory=list)
 
 
-class SiteInfrastructureLink(BaseModel):
-    relationship_type: str
-    direction: str
-    other_node: dict[str, Any] = Field(default_factory=dict)
-    relationship_properties: dict[str, Any] = Field(default_factory=dict)
-
-
 class SiteInfrastructureNode(BaseModel):
     id: str | None = None
-    labels: list[str] = Field(default_factory=list)
+    node_type: str | None = None
     name: str | None = None
     polygon: Any | None = None
-    links: list[SiteInfrastructureLink] = Field(default_factory=list)
+
+
+class SiteInfrastructureEdge(BaseModel):
+    source_id: str | None = None
+    target_id: str | None = None
+    relationship_type: str
 
 
 class SitesInfrastructuresLinksResponse(BaseModel):
-    count: int
-    items: list[SiteInfrastructureNode] = Field(default_factory=list)
+    nodes: list[SiteInfrastructureNode] = Field(default_factory=list)
+    edges: list[SiteInfrastructureEdge] = Field(default_factory=list)

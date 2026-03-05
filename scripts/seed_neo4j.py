@@ -19,6 +19,11 @@ def create_constraints(driver: Driver, database: str) -> None:
             ).consume()
 
 
+def clear_database(driver: Driver, database: str) -> None:
+    with driver.session(database=database) as session:
+        session.run('MATCH (n) DETACH DELETE n').consume()
+
+
 def seed_nodes(driver: Driver, database: str) -> None:
     sites = [
         {'id': 's1', 'name': 'Site North', 'polygon': 'POLYGON((34.8040 32.1130,34.8090 32.1130,34.8090 32.1170,34.8040 32.1170,34.8040 32.1130))'},
@@ -132,18 +137,18 @@ def seed_relationships(driver: Driver, database: str) -> None:
         {'from_id': 's6', 'to_id': 'i6'},
     ]
     interchangeable = [
-        {'from_id': 'f1', 'to_id': 's1'},
-        {'from_id': 'f1', 'to_id': 's2'},
-        {'from_id': 'f2', 'to_id': 's2'},
-        {'from_id': 'f2', 'to_id': 's3'},
-        {'from_id': 'f3', 'to_id': 's3'},
-        {'from_id': 'f3', 'to_id': 's4'},
-        {'from_id': 'f4', 'to_id': 's4'},
-        {'from_id': 'f4', 'to_id': 's5'},
-        {'from_id': 'f5', 'to_id': 's5'},
-        {'from_id': 'f5', 'to_id': 's6'},
-        {'from_id': 'f6', 'to_id': 's1'},
-        {'from_id': 'f6', 'to_id': 's6'},
+        {'from_id': 'c1', 'to_id': 's1'},
+        {'from_id': 'c2', 'to_id': 's2'},
+        {'from_id': 'c3', 'to_id': 's3'},
+        {'from_id': 'c4', 'to_id': 's4'},
+        {'from_id': 'c5', 'to_id': 's5'},
+        {'from_id': 'c6', 'to_id': 's6'},
+        {'from_id': 'c7', 'to_id': 's1'},
+        {'from_id': 'c8', 'to_id': 's2'},
+        {'from_id': 'c9', 'to_id': 's3'},
+        {'from_id': 'c10', 'to_id': 's4'},
+        {'from_id': 'c11', 'to_id': 's5'},
+        {'from_id': 'c12', 'to_id': 's6'},
     ]
     influence = [
         {'from_id': 'c1', 'to_id': 'e1'},
@@ -222,7 +227,7 @@ def seed_relationships(driver: Driver, database: str) -> None:
         session.run(
             '''
             UNWIND $rows AS row
-            MATCH (a:Facility {id: row.from_id})
+            MATCH (a:Componenet {id: row.from_id})
             MATCH (b:Site {id: row.to_id})
             MERGE (a)-[r:INTERCHANGEABLE]-(b)
             SET r.updated_at = datetime()
@@ -317,6 +322,7 @@ def main() -> None:
 
     driver = GraphDatabase.driver(uri, auth=(user, password))
     try:
+        clear_database(driver=driver, database=database)
         create_constraints(driver=driver, database=database)
         seed_nodes(driver=driver, database=database)
         seed_relationships(driver=driver, database=database)

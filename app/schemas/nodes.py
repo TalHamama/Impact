@@ -36,18 +36,21 @@ class LinksMap(BaseModel):
     hop_2: HopMap
 
 
+class DirectionMap(BaseModel):
+    direction: Literal['INCOMING', 'OUTGOING', 'BOTH']
+    depth: int | None = None
+    nodes: list[OtherNode] = Field(default_factory=list)
+    edges: list[MapEdge] = Field(default_factory=list)
+
+
 class NodeDetailsResponse(BaseModel):
     node: NodeDetails
-    direct_links: list[EntityLink] = Field(default_factory=list)
-    maintenance: list[ArtifactItem] = Field(default_factory=list)
-    reports: list[ArtifactItem] = Field(default_factory=list)
-    links_map: LinksMap
+    relations: list[EntityLink] = Field(default_factory=list)
 
 
 class NodeLinksMapResponse(BaseModel):
     node: NodeDetails
-    direct_links: list[EntityLink] = Field(default_factory=list)
-    links_map: LinksMap
+    links_map: DirectionMap
 
 
 class NodeFullMapResponse(BaseModel):

@@ -18,6 +18,7 @@ class Settings:
     app_port: int
     app_reload: bool
     app_workers: int
+    app_enable_docs: bool
     cors_origins: list[str]
     trusted_hosts: list[str]
     neo4j_uri: str
@@ -42,6 +43,7 @@ def get_settings() -> Settings:
         app_port=_as_int(os.getenv('APP_PORT'), 8000),
         app_reload=_as_bool(os.getenv('APP_RELOAD'), app_env != 'production'),
         app_workers=max(_as_int(os.getenv('APP_WORKERS'), 1), 1),
+        app_enable_docs=_as_bool(os.getenv('APP_ENABLE_DOCS'), app_env != 'production'),
         cors_origins=_as_csv(os.getenv('CORS_ORIGINS', '*')),
         trusted_hosts=_as_csv(os.getenv('TRUSTED_HOSTS', '*')),
         neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
