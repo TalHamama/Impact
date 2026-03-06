@@ -14,6 +14,8 @@ INFRASTRUCTURE_LABELS = ['Infrastructure', 'Infrastrcture']
 COMPONENT_LABELS = ['Component', 'Componenet']
 CONTAINES_REL = 'CONTAINES'
 INTERCHANGEABLE_REL = 'INTERCHANGEABLE'
+DEPENDENCY_REL = 'DEPENDENCY'
+DEPENDS_REL = 'DEPENDS'
 
 SITE_AND_INFRASTRUCTURE_LABELS_CYPHER = (
     f"['{SITE_LABEL}', '{INFRASTRUCTURE_LABELS[0]}', '{INFRASTRUCTURE_LABELS[1]}']"
@@ -265,6 +267,15 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
         source_id,
         target_id,
         '{INTERCHANGEABLE_REL}' AS relationship_type
+
+      UNION
+
+      MATCH (s:{SITE_LABEL})-[:{CONTAINES_REL}]->(:{FACILITY_LABEL})-[:{DEPENDENCY_REL}]->(i)
+      WHERE any(label IN labels(i) WHERE label IN {INFRASTRUCTURE_LABELS_CYPHER})
+      RETURN DISTINCT
+        s.id AS source_id,
+        i.id AS target_id,
+        '{DEPENDS_REL}' AS relationship_type
     }}
     RETURN DISTINCT source_id, target_id, relationship_type
     ORDER BY relationship_type, source_id, target_id
