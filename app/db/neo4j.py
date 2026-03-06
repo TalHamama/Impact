@@ -6,18 +6,18 @@ from typing import Any
 from neo4j import Driver, GraphDatabase
 from neo4j.exceptions import Neo4jError
 
-from app.db.neo4j_constants import (
-    CYPHER_ARTIFACT_LABELS,
-    CYPHER_COMPONENT_LABELS,
-    CYPHER_SITE_INFRASTRUCTURE_LABELS,
-    LABEL_INFRASTRUCTURE,
-    LABEL_INFRASTRUCTURE_LEGACY,
-    LABEL_MAINTENANCE,
-    LABEL_REPORT,
-    LABEL_SITE,
-    REL_INTERCHANGEABLE,
-)
 from app.utils.errors import DatabaseError, NotFoundError
+
+SITE_LABEL = 'Site'
+INFRASTRUCTURE_LABELS = ['Infrastructure', 'Infrastrcture']
+COMPONENT_LABELS = ['Component', 'Componenet']
+INTERCHANGEABLE_REL = 'INTERCHANGEABLE'
+
+SITE_AND_INFRASTRUCTURE_LABELS_CYPHER = (
+    f"['{SITE_LABEL}', '{INFRASTRUCTURE_LABELS[0]}', '{INFRASTRUCTURE_LABELS[1]}']"
+)
+INFRASTRUCTURE_LABELS_CYPHER = f"['{INFRASTRUCTURE_LABELS[0]}', '{INFRASTRUCTURE_LABELS[1]}']"
+COMPONENT_LABELS_CYPHER = "['Component', 'Componenet']"
 
 
 class Neo4jDriver:
@@ -227,44 +227,44 @@ def fetch_graph_overview(driver: Driver, database: str | None = None) -> dict[st
 
 
 def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None = None) -> dict[str, Any]:
-    nodes_query = (
-        'MATCH (n)\n'
-        f'WHERE any(label IN labels(n) WHERE label IN {CYPHER_SITE_INFRASTRUCTURE_LABELS})\n'
-        'RETURN\n'
-        '  n.id AS node_id,\n'
-        '  CASE\n'
-        f"    WHEN '{LABEL_SITE}' IN labels(n) THEN '{LABEL_SITE}'\n"
-        f"    WHEN '{LABEL_INFRASTRUCTURE}' IN labels(n) THEN '{LABEL_INFRASTRUCTURE}'\n"
-        f"    ELSE '{LABEL_INFRASTRUCTURE_LEGACY}'\n"
-        '  END AS node_type,\n'
-        '  n.name AS node_name,\n'
-        '  n.polygon AS node_polygon\n'
-        "ORDER BY coalesce(n.name, n.id, '')\n"
-    )
+    nodes_query = f'''
+    MATCH (n)
+    WHERE any(label IN labels(n) WHERE label IN {SITE_AND_INFRASTRUCTURE_LABELS_CYPHER})
+    RETURN
+      n.id AS node_id,
+      CASE
+        WHEN '{SITE_LABEL}' IN labels(n) THEN '{SITE_LABEL}'
+        WHEN '{INFRASTRUCTURE_LABELS[0]}' IN labels(n) THEN '{INFRASTRUCTURE_LABELS[0]}'
+        ELSE '{INFRASTRUCTURE_LABELS[1]}'
+      END AS node_type,
+      n.name AS node_name,
+      n.polygon AS node_polygon
+    ORDER BY coalesce(n.name, n.id, '')
+    '''
 
-    edges_query = (
-        'CALL () {\n'
-        '  MATCH (a)-[r]-(b)\n'
-        f'  WHERE any(label IN labels(a) WHERE label IN {CYPHER_SITE_INFRASTRUCTURE_LABELS})\n'
-        f'    AND any(label IN labels(b) WHERE label IN {CYPHER_SITE_INFRASTRUCTURE_LABELS})\n'
-        '  RETURN DISTINCT\n'
-        '    startNode(r).id AS source_id,\n'
-        '    endNode(r).id AS target_id,\n'
-        '    type(r) AS relationship_type\n'
-        '\n'
-        '  UNION\n'
-        '\n'
-        f"  MATCH (s1:{LABEL_SITE})<-[:{REL_INTERCHANGEABLE}]-(c)-[:{REL_INTERCHANGEABLE}]->(s2:{LABEL_SITE})\n"
-        f'  WHERE any(label IN labels(c) WHERE label IN {CYPHER_COMPONENT_LABELS})\n'
-        '    AND s1.id < s2.id\n'
-        '  RETURN DISTINCT\n'
-        '    s1.id AS source_id,\n'
-        '    s2.id AS target_id,\n'
-        f"    '{REL_INTERCHANGEABLE}' AS relationship_type\n"
-        '}\n'
-        'RETURN DISTINCT source_id, target_id, relationship_type\n'
-        'ORDER BY relationship_type, source_id, target_id\n'
-    )
+    edges_query = f'''
+    CALL () {{
+      MATCH (a)-[r]-(b)
+      WHERE any(label IN labels(a) WHERE label IN {SITE_AND_INFRASTRUCTURE_LABELS_CYPHER})
+        AND any(label IN labels(b) WHERE label IN {SITE_AND_INFRASTRUCTURE_LABELS_CYPHER})
+      RETURN DISTINCT
+        startNode(r).id AS source_id,
+        endNode(r).id AS target_id,
+        type(r) AS relationship_type
+
+      UNION
+
+      MATCH (s1:{SITE_LABEL})<-[:{INTERCHANGEABLE_REL}]-(c)-[:{INTERCHANGEABLE_REL}]->(s2:{SITE_LABEL})
+      WHERE any(label IN labels(c) WHERE label IN {COMPONENT_LABELS_CYPHER})
+        AND s1.id < s2.id
+      RETURN DISTINCT
+        s1.id AS source_id,
+        s2.id AS target_id,
+        '{INTERCHANGEABLE_REL}' AS relationship_type
+    }}
+    RETURN DISTINCT source_id, target_id, relationship_type
+    ORDER BY relationship_type, source_id, target_id
+    '''
 
     try:
         with driver.session(database=database) if database else driver.session() as session:
@@ -288,7 +288,7 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
             return {'nodes': _to_json_compatible(nodes), 'edges': _to_json_compatible(edges)}
     except Neo4jError as exc:
         raise DatabaseError(
-            message=str(exc) or 'Failed to query Site/Infrastrcture links from Neo4j.',
+            message=str(exc) or f'Failed to query {SITE_LABEL}/{INFRASTRUCTURE_LABELS[1]} links from Neo4j.',
             details={
                 'database': database,
                 'neo4j_error': str(exc),
@@ -341,16 +341,6 @@ def fetch_node_details(driver: Driver, node_id: str, database: str | None = None
       type(r2) AS relationship_type,
       properties(r2) AS relationship_properties
     '''
-
-    linked_artifacts_query = (
-        'MATCH (n {id: $node_id})-[r]-(m)\n'
-        f'WHERE any(label IN labels(m) WHERE label IN {CYPHER_ARTIFACT_LABELS})\n'
-        'RETURN\n'
-        '  m.id AS artifact_id,\n'
-        '  labels(m) AS artifact_labels,\n'
-        '  properties(m) AS artifact_properties,\n'
-        '  type(r) AS relationship_type\n'
-    )
 
     try:
         with driver.session(database=database) if database else driver.session() as session:
@@ -428,50 +418,9 @@ def fetch_node_details(driver: Driver, node_id: str, database: str | None = None
                     'relationship_properties': _to_json_compatible(record['relationship_properties'] or {}),
                 }
 
-            maintenance_items: list[dict[str, Any]] = []
-            reports_items: list[dict[str, Any]] = []
-
-            for item in _as_list(node_properties.get('maintenance')):
-                maintenance_items.append(
-                    {
-                        'source': 'property',
-                        'id': None,
-                        'labels': [],
-                        'relationship_type': None,
-                        'properties': item if isinstance(item, dict) else {'value': item},
-                    }
-                )
-
-            for item in _as_list(node_properties.get('reports')):
-                reports_items.append(
-                    {
-                        'source': 'property',
-                        'id': None,
-                        'labels': [],
-                        'relationship_type': None,
-                        'properties': item if isinstance(item, dict) else {'value': item},
-                    }
-                )
-
-            for record in session.run(linked_artifacts_query, node_id=node_id):
-                labels = record['artifact_labels'] or []
-                payload = {
-                    'source': 'linked_node',
-                        'id': record['artifact_id'],
-                        'labels': labels,
-                        'relationship_type': record['relationship_type'],
-                        'properties': _to_json_compatible(record['artifact_properties'] or {}),
-                    }
-                if LABEL_MAINTENANCE in labels:
-                    maintenance_items.append(payload)
-                if LABEL_REPORT in labels:
-                    reports_items.append(payload)
-
             return {
                 'node': node_payload,
                 'direct_links': direct_links,
-                'maintenance': maintenance_items,
-                'reports': reports_items,
                 'links_map': {
                     'hop_1': {
                         'nodes': list(hop1_nodes_by_id.values()),
@@ -770,14 +719,6 @@ def fetch_node_full_map(driver: Driver, node_id: str, database: str | None = Non
                 'neo4j_code': getattr(exc, 'code', None),
             },
         ) from exc
-
-
-def _as_list(value: Any) -> list[Any]:
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    return [value]
 
 
 def _to_json_compatible(value: Any) -> Any:
