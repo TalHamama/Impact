@@ -2,6 +2,7 @@
 import time
 import uuid
 from contextlib import asynccontextmanager
+from hmac import compare_digest
 from typing import Any
 
 import uvicorn
@@ -10,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from swagger_ui_bundle import swagger_ui_path
@@ -83,6 +85,62 @@ if docs_enabled:
             swagger_css_url='/_docs_static/swagger-ui.css',
             swagger_favicon_url='/_docs_static/favicon-32x32.png',
         )
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version='1.0.0',
+        routes=app.routes,
+        description='Impact API',
+    )
+
+    openapi_schema.setdefault('components', {}).setdefault('securitySchemes', {})['ApiKeyAuth'] = {
+        'type': 'apiKey',
+        'in': 'header',
+        'name': settings.api_key_header,
+    }
+    openapi_schema['security'] = [{'ApiKeyAuth': []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
+
+
+@app.middleware('http')
+async def api_key_auth_middleware(request: Request, call_next):
+    exempt_exact_paths = {'/health', '/ready', '/docs', '/openapi.json'}
+    exempt_prefixes = ('/_docs_static',)
+
+    if request.method == 'OPTIONS':
+        return await call_next(request)
+
+    if request.url.path in exempt_exact_paths or request.url.path.startswith(exempt_prefixes):
+        return await call_next(request)
+
+    if settings.api_key_enabled:
+        if not settings.api_key_value:
+            logger.error('API key auth enabled but API_KEY_VALUE is empty.')
+            return error_response(
+                error_type='InternalServerError',
+                message='Server authentication is not configured correctly.',
+                status_code=500,
+            )
+
+        provided_key = request.headers.get(settings.api_key_header, '')
+        if not provided_key or not compare_digest(provided_key, settings.api_key_value):
+            return error_response(
+                error_type='Unauthorized',
+                message='Invalid or missing API key.',
+                details={'header': settings.api_key_header},
+                status_code=401,
+            )
+
+    return await call_next(request)
 
 
 @app.middleware('http')
