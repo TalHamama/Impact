@@ -9,8 +9,10 @@ from neo4j.exceptions import Neo4jError
 from app.utils.errors import DatabaseError, NotFoundError
 
 SITE_LABEL = 'Site'
+FACILITY_LABEL = 'Facility'
 INFRASTRUCTURE_LABELS = ['Infrastructure', 'Infrastrcture']
 COMPONENT_LABELS = ['Component', 'Componenet']
+CONTAINES_REL = 'CONTAINES'
 INTERCHANGEABLE_REL = 'INTERCHANGEABLE'
 
 SITE_AND_INFRASTRUCTURE_LABELS_CYPHER = (
@@ -254,12 +256,14 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
 
       UNION
 
-      MATCH (s1:{SITE_LABEL})<-[:{INTERCHANGEABLE_REL}]-(c)-[:{INTERCHANGEABLE_REL}]->(s2:{SITE_LABEL})
-      WHERE any(label IN labels(c) WHERE label IN {COMPONENT_LABELS_CYPHER})
-        AND s1.id < s2.id
+      MATCH (s1:{SITE_LABEL})-[:{CONTAINES_REL}]->(:{FACILITY_LABEL})-[:{INTERCHANGEABLE_REL}]->(s2:{SITE_LABEL})
+      WITH
+        CASE WHEN s1.id < s2.id THEN s1.id ELSE s2.id END AS source_id,
+        CASE WHEN s1.id < s2.id THEN s2.id ELSE s1.id END AS target_id
+      WHERE source_id IS NOT NULL AND target_id IS NOT NULL AND source_id <> target_id
       RETURN DISTINCT
-        s1.id AS source_id,
-        s2.id AS target_id,
+        source_id,
+        target_id,
         '{INTERCHANGEABLE_REL}' AS relationship_type
     }}
     RETURN DISTINCT source_id, target_id, relationship_type
