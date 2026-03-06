@@ -6,6 +6,17 @@ from typing import Any
 from neo4j import Driver, GraphDatabase
 from neo4j.exceptions import Neo4jError
 
+from app.db.neo4j_constants import (
+    CYPHER_ARTIFACT_LABELS,
+    CYPHER_COMPONENT_LABELS,
+    CYPHER_SITE_INFRASTRUCTURE_LABELS,
+    LABEL_INFRASTRUCTURE,
+    LABEL_INFRASTRUCTURE_LEGACY,
+    LABEL_MAINTENANCE,
+    LABEL_REPORT,
+    LABEL_SITE,
+    REL_INTERCHANGEABLE,
+)
 from app.utils.errors import DatabaseError, NotFoundError
 
 
@@ -216,42 +227,44 @@ def fetch_graph_overview(driver: Driver, database: str | None = None) -> dict[st
 
 
 def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None = None) -> dict[str, Any]:
-    nodes_query = '''
-    MATCH (n)
-    WHERE any(label IN labels(n) WHERE label IN ['Site', 'Infrastrcture'])
-    RETURN
-      n.id AS node_id,
-      CASE
-        WHEN 'Site' IN labels(n) THEN 'Site'
-        ELSE 'Infrastrcture'
-      END AS node_type,
-      n.name AS node_name,
-      n.polygon AS node_polygon
-    ORDER BY coalesce(n.name, n.id, '')
-    '''
+    nodes_query = (
+        'MATCH (n)\n'
+        f'WHERE any(label IN labels(n) WHERE label IN {CYPHER_SITE_INFRASTRUCTURE_LABELS})\n'
+        'RETURN\n'
+        '  n.id AS node_id,\n'
+        '  CASE\n'
+        f"    WHEN '{LABEL_SITE}' IN labels(n) THEN '{LABEL_SITE}'\n"
+        f"    WHEN '{LABEL_INFRASTRUCTURE}' IN labels(n) THEN '{LABEL_INFRASTRUCTURE}'\n"
+        f"    ELSE '{LABEL_INFRASTRUCTURE_LEGACY}'\n"
+        '  END AS node_type,\n'
+        '  n.name AS node_name,\n'
+        '  n.polygon AS node_polygon\n'
+        "ORDER BY coalesce(n.name, n.id, '')\n"
+    )
 
-    edges_query = '''
-    CALL {
-      MATCH (a)-[r]-(b)
-      WHERE any(label IN labels(a) WHERE label IN ['Site', 'Infrastrcture'])
-        AND any(label IN labels(b) WHERE label IN ['Site', 'Infrastrcture'])
-      RETURN DISTINCT
-        startNode(r).id AS source_id,
-        endNode(r).id AS target_id,
-        type(r) AS relationship_type
-
-      UNION
-
-      MATCH (s1:Site)<-[:INTERCHANGEABLE]-(c:Componenet)-[:INTERCHANGEABLE]->(s2:Site)
-      WHERE s1.id < s2.id
-      RETURN DISTINCT
-        s1.id AS source_id,
-        s2.id AS target_id,
-        'INTERCHANGEABLE' AS relationship_type
-    }
-    RETURN DISTINCT source_id, target_id, relationship_type
-    ORDER BY relationship_type, source_id, target_id
-    '''
+    edges_query = (
+        'CALL () {\n'
+        '  MATCH (a)-[r]-(b)\n'
+        f'  WHERE any(label IN labels(a) WHERE label IN {CYPHER_SITE_INFRASTRUCTURE_LABELS})\n'
+        f'    AND any(label IN labels(b) WHERE label IN {CYPHER_SITE_INFRASTRUCTURE_LABELS})\n'
+        '  RETURN DISTINCT\n'
+        '    startNode(r).id AS source_id,\n'
+        '    endNode(r).id AS target_id,\n'
+        '    type(r) AS relationship_type\n'
+        '\n'
+        '  UNION\n'
+        '\n'
+        f"  MATCH (s1:{LABEL_SITE})<-[:{REL_INTERCHANGEABLE}]-(c)-[:{REL_INTERCHANGEABLE}]->(s2:{LABEL_SITE})\n"
+        f'  WHERE any(label IN labels(c) WHERE label IN {CYPHER_COMPONENT_LABELS})\n'
+        '    AND s1.id < s2.id\n'
+        '  RETURN DISTINCT\n'
+        '    s1.id AS source_id,\n'
+        '    s2.id AS target_id,\n'
+        f"    '{REL_INTERCHANGEABLE}' AS relationship_type\n"
+        '}\n'
+        'RETURN DISTINCT source_id, target_id, relationship_type\n'
+        'ORDER BY relationship_type, source_id, target_id\n'
+    )
 
     try:
         with driver.session(database=database) if database else driver.session() as session:
@@ -329,15 +342,15 @@ def fetch_node_details(driver: Driver, node_id: str, database: str | None = None
       properties(r2) AS relationship_properties
     '''
 
-    linked_artifacts_query = '''
-    MATCH (n {id: $node_id})-[r]-(m)
-    WHERE any(label IN labels(m) WHERE label IN ['Maintenance', 'Report'])
-    RETURN
-      m.id AS artifact_id,
-      labels(m) AS artifact_labels,
-      properties(m) AS artifact_properties,
-      type(r) AS relationship_type
-    '''
+    linked_artifacts_query = (
+        'MATCH (n {id: $node_id})-[r]-(m)\n'
+        f'WHERE any(label IN labels(m) WHERE label IN {CYPHER_ARTIFACT_LABELS})\n'
+        'RETURN\n'
+        '  m.id AS artifact_id,\n'
+        '  labels(m) AS artifact_labels,\n'
+        '  properties(m) AS artifact_properties,\n'
+        '  type(r) AS relationship_type\n'
+    )
 
     try:
         with driver.session(database=database) if database else driver.session() as session:
@@ -449,9 +462,9 @@ def fetch_node_details(driver: Driver, node_id: str, database: str | None = None
                         'relationship_type': record['relationship_type'],
                         'properties': _to_json_compatible(record['artifact_properties'] or {}),
                     }
-                if 'Maintenance' in labels:
+                if LABEL_MAINTENANCE in labels:
                     maintenance_items.append(payload)
-                if 'Report' in labels:
+                if LABEL_REPORT in labels:
                     reports_items.append(payload)
 
             return {
@@ -484,6 +497,88 @@ def fetch_node_details(driver: Driver, node_id: str, database: str | None = None
         ) from exc
 
 
+def fetch_node_details_by_name(driver: Driver, node_name: str, database: str | None = None) -> dict[str, Any]:
+    lookup_query = '''
+    MATCH (n {name: $node_name})
+    RETURN n.id AS node_id
+    ORDER BY n.id
+    LIMIT 1
+    '''
+
+    try:
+        with driver.session(database=database) if database else driver.session() as session:
+            match_record = session.run(lookup_query, node_name=node_name).single()
+            if match_record is None or not match_record.get('node_id'):
+                raise NotFoundError(
+                    message=f'Node with name "{node_name}" was not found.',
+                    details={'node_name': node_name},
+                )
+
+            return fetch_node_details(
+                driver=driver,
+                node_id=match_record['node_id'],
+                database=database,
+            )
+    except NotFoundError:
+        raise
+    except Neo4jError as exc:
+        raise DatabaseError(
+            message=str(exc) or 'Failed to query node details by name from Neo4j.',
+            details={
+                'node_name': node_name,
+                'database': database,
+                'neo4j_error': str(exc),
+                'neo4j_code': getattr(exc, 'code', None),
+            },
+        ) from exc
+
+
+def fetch_node_links_map_by_name(
+    driver: Driver,
+    node_name: str,
+    direction: str = 'BOTH',
+    depth: int | None = None,
+    database: str | None = None,
+) -> dict[str, Any]:
+    lookup_query = '''
+    MATCH (n {name: $node_name})
+    RETURN n.id AS node_id
+    ORDER BY n.id
+    LIMIT 1
+    '''
+
+    try:
+        with driver.session(database=database) if database else driver.session() as session:
+            match_record = session.run(lookup_query, node_name=node_name).single()
+            if match_record is None or not match_record.get('node_id'):
+                raise NotFoundError(
+                    message=f'Node with name "{node_name}" was not found.',
+                    details={'node_name': node_name},
+                )
+
+            return fetch_node_links_map(
+                driver=driver,
+                node_id=match_record['node_id'],
+                direction=direction,
+                depth=depth,
+                database=database,
+            )
+    except NotFoundError:
+        raise
+    except Neo4jError as exc:
+        raise DatabaseError(
+            message=str(exc) or 'Failed to query node links map by name from Neo4j.',
+            details={
+                'node_name': node_name,
+                'direction': direction,
+                'depth': depth,
+                'database': database,
+                'neo4j_error': str(exc),
+                'neo4j_code': getattr(exc, 'code', None),
+            },
+        ) from exc
+
+
 def fetch_node_links_map(
     driver: Driver,
     node_id: str,
@@ -497,36 +592,39 @@ def fetch_node_links_map(
     LIMIT 1
     '''
 
+    effective_depth = max(1, depth) if depth is not None else None
+
     if direction == 'INCOMING':
-        path_pattern = '(n {id: $node_id})<-[*1..DEPTH]-(m)'
+        relationship_pattern = '<-[*1..DEPTH]-'
     elif direction == 'OUTGOING':
-        path_pattern = '(n {id: $node_id})-[*1..DEPTH]->(m)'
+        relationship_pattern = '-[*1..DEPTH]->'
     else:
-        path_pattern = '(n {id: $node_id})-[*1..DEPTH]-(m)'
+        relationship_pattern = '-[*1..DEPTH]-'
 
-    depth_suffix = '' if depth is None else str(max(1, depth))
-    path_pattern = path_pattern.replace('DEPTH', depth_suffix)
+    depth_suffix = '' if effective_depth is None else str(effective_depth)
+    relationship_pattern = relationship_pattern.replace('DEPTH', depth_suffix)
 
-    direction_nodes_query = f'''
-    MATCH p={path_pattern}
-    UNWIND nodes(p) AS path_node
-    WITH DISTINCT path_node
-    WHERE path_node.id <> $node_id
+    direction_map_query = f'''
+    MATCH (start {{id: $node_id}})
+    CALL (start) {{
+      OPTIONAL MATCH (start){relationship_pattern}(m)
+      RETURN [node IN collect(DISTINCT m) WHERE node IS NOT NULL] AS reachable_nodes
+    }}
+    WITH reachable_nodes + [start] AS subgraph_nodes
+    UNWIND subgraph_nodes AS src
+    OPTIONAL MATCH (src)-[rel]-(dst)
+    WHERE dst IN subgraph_nodes
+    WITH
+      subgraph_nodes,
+      collect(
+        DISTINCT CASE
+          WHEN rel IS NULL THEN NULL
+          ELSE [startNode(rel), rel, endNode(rel)]
+        END
+      ) AS edge_tuples
     RETURN
-      path_node.id AS node_id,
-      labels(path_node) AS node_labels,
-      properties(path_node) AS node_properties
-    '''
-
-    direction_edges_query = f'''
-    MATCH p={path_pattern}
-    UNWIND relationships(p) AS rel
-    RETURN DISTINCT
-      startNode(rel).id AS source_id,
-      endNode(rel).id AS target_id,
-      type(rel) AS relationship_type,
-      properties(rel) AS relationship_properties
-    ORDER BY relationship_type, source_id, target_id
+      subgraph_nodes AS nodes,
+      [edge_tuple IN edge_tuples WHERE edge_tuple IS NOT NULL] AS edges
     '''
 
     try:
@@ -544,30 +642,53 @@ def fetch_node_links_map(
                 'properties': _to_json_compatible(node_record['node_properties'] or {}),
             }
 
-            direction_nodes = [
-                {
-                    'id': record['node_id'],
-                    'labels': record['node_labels'] or [],
-                    'properties': _to_json_compatible(record['node_properties'] or {}),
-                }
-                for record in session.run(direction_nodes_query, node_id=node_id)
-            ]
+            map_record = session.run(direction_map_query, node_id=node_id).single()
+            if map_record is None:
+                direction_nodes = []
+                direction_edges = []
+            else:
+                raw_nodes = map_record['nodes'] or []
+                raw_edges = map_record['edges'] or []
 
-            direction_edges = [
-                {
-                    'source_id': record['source_id'],
-                    'target_id': record['target_id'],
-                    'relationship_type': record['relationship_type'],
-                    'relationship_properties': _to_json_compatible(record['relationship_properties'] or {}),
-                }
-                for record in session.run(direction_edges_query, node_id=node_id)
-            ]
+                direction_nodes = [
+                    {
+                        'id': raw_node.get('id'),
+                        'labels': list(raw_node.labels) if getattr(raw_node, 'labels', None) else [],
+                        'properties': _to_json_compatible(dict(raw_node.items()) if hasattr(raw_node, 'items') else {}),
+                    }
+                    for raw_node in sorted(
+                        raw_nodes,
+                        key=lambda item: (item.get('name') if hasattr(item, 'get') else None) or (item.get('id') if hasattr(item, 'get') else '') or '',
+                    )
+                    if raw_node.get('id')
+                    and raw_node.get('id') != node_id
+                ]
+
+                direction_edges = [
+                    {
+                        'source_id': source_node.get('id') if hasattr(source_node, 'get') else None,
+                        'target_id': target_node.get('id') if hasattr(target_node, 'get') else None,
+                        'relationship_type': rel.type if hasattr(rel, 'type') else None,
+                        'relationship_properties': _to_json_compatible(dict(rel.items()) if hasattr(rel, 'items') else {}),
+                    }
+                    for raw_edge in sorted(
+                        raw_edges,
+                        key=lambda item: (
+                            item[1].type if len(item) > 1 and hasattr(item[1], 'type') else '',
+                            item[0].get('id') if len(item) > 0 and hasattr(item[0], 'get') else '',
+                            item[2].get('id') if len(item) > 2 and hasattr(item[2], 'get') else '',
+                        ),
+                    )
+                    if len(raw_edge) == 3
+                    for source_node, rel, target_node in [raw_edge]
+                    if hasattr(rel, 'type')
+                ]
 
             return {
                 'node': node_payload,
                 'links_map': {
                     'direction': direction,
-                    'depth': depth,
+                    'depth': effective_depth,
                     'nodes': direction_nodes,
                     'edges': direction_edges,
                 },

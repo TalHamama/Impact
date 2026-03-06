@@ -19,6 +19,7 @@ class Settings:
     app_reload: bool
     app_workers: int
     app_enable_docs: bool
+    links_map_max_depth: int
     cors_origins: list[str]
     trusted_hosts: list[str]
     neo4j_uri: str
@@ -44,6 +45,7 @@ def get_settings() -> Settings:
         app_reload=_as_bool(os.getenv('APP_RELOAD'), app_env != 'production'),
         app_workers=max(_as_int(os.getenv('APP_WORKERS'), 1), 1),
         app_enable_docs=_as_bool(os.getenv('APP_ENABLE_DOCS'), app_env != 'production'),
+        links_map_max_depth=max(_as_int(os.getenv('LINKS_MAP_MAX_DEPTH'), 4), 1),
         cors_origins=_as_csv(os.getenv('CORS_ORIGINS', '*')),
         trusted_hosts=_as_csv(os.getenv('TRUSTED_HOSTS', '*')),
         neo4j_uri=os.getenv('NEO4J_URI', 'bolt://localhost:7687'),
