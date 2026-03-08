@@ -13,9 +13,13 @@ SITE_NODE_LABEL = 'Site'
 FACILITY_NODE_LABEL = 'Facility'
 INFRASTRUCTURE_NODE_LABEL = 'Infrastructure'
 COMPONENT_NODE_LABEL = 'Component'
+SYSTEM_NODE_LABEL = 'System'
+EFFORT_NODE_LABEL = 'Effort'
 CONTAINS_RELATIONSHIP_TYPE = 'CONTAINS'
 BACKUP_FOR_RELATIONSHIP_TYPE = 'BACKUP_FOR'
 DEPENDS_RELATIONSHIP_TYPE = 'DEPENDS'
+PART_OF_SYSTEM_RELATIONSHIP_TYPE = 'PART_OF_SYSTEM'
+SUPPORT_RELATIONSHIP_TYPE = 'SUPPORT'
 
 SITE_AND_INFRASTRUCTURE_NODE_LABELS_CYPHER = (
     f"['{SITE_NODE_LABEL}', '{INFRASTRUCTURE_NODE_LABEL}']"
@@ -312,6 +316,7 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
 
 def fetch_sites_infrastructures_with_links_for_qlik(driver: Driver, database: str | None = None) -> dict[str, Any]:
     graph = fetch_sites_infrastructures_with_links(driver=driver, database=database)
+    facilities = fetch_facilities_for_qlik(driver=driver, database=database)
 
     nodes = [
         {
@@ -324,7 +329,89 @@ def fetch_sites_infrastructures_with_links_for_qlik(driver: Driver, database: st
     return {
         'nodes': _to_json_compatible(nodes),
         'edges': _to_json_compatible(graph.get('edges', [])),
+        'facilities': _to_json_compatible(facilities),
     }
+
+
+def fetch_facilities_for_qlik(driver: Driver, database: str | None = None) -> list[dict[str, Any]]:
+    query = f'''
+    MATCH (site:{SITE_NODE_LABEL})-[:{CONTAINS_RELATIONSHIP_TYPE}]->(facility:{FACILITY_NODE_LABEL})
+    WITH DISTINCT site, facility
+
+    CALL (facility) {{
+      OPTIONAL MATCH (facility)-[:{PART_OF_SYSTEM_RELATIONSHIP_TYPE}]->(system:{SYSTEM_NODE_LABEL})
+      WITH DISTINCT system
+      ORDER BY system.name, system.id
+      RETURN [name IN collect(system.name) WHERE name IS NOT NULL] AS department_name
+    }}
+
+    CALL (facility) {{
+      OPTIONAL MATCH (facility)-[:{CONTAINS_RELATIONSHIP_TYPE}]->(:{COMPONENT_NODE_LABEL})-[:{SUPPORT_RELATIONSHIP_TYPE}]->(effort:{EFFORT_NODE_LABEL})
+      WITH DISTINCT effort
+      ORDER BY effort.name, effort.id
+      RETURN [name IN collect(effort.name) WHERE name IS NOT NULL] AS effort_name
+    }}
+
+    CALL (facility) {{
+      OPTIONAL MATCH (facility)-[:{DEPENDS_RELATIONSHIP_TYPE}]->(infrastructure:{INFRASTRUCTURE_NODE_LABEL})
+      WITH DISTINCT infrastructure
+      ORDER BY infrastructure.name, infrastructure.id
+      RETURN [name IN collect(infrastructure.name) WHERE name IS NOT NULL] AS dependent_infrastructures
+    }}
+
+    CALL (site) {{
+      OPTIONAL MATCH (backup_site:{SITE_NODE_LABEL})-[:{CONTAINS_RELATIONSHIP_TYPE}]->(:{FACILITY_NODE_LABEL})-[:{BACKUP_FOR_RELATIONSHIP_TYPE}]->(site)
+      WITH DISTINCT backup_site
+      ORDER BY backup_site.name, backup_site.id
+      RETURN [name IN collect(backup_site.name) WHERE name IS NOT NULL] AS backup_site
+    }}
+
+    RETURN
+      facility.id AS id,
+      site.id AS site_id,
+      facility.name AS name,
+      department_name,
+      effort_name,
+      site.level_for_defence_with_upper_layer AS site_level_for_defence_with_upper_layer,
+      backup_site,
+      dependent_infrastructures,
+      CASE
+        WHEN site.defence_with_iron_dome IS NULL THEN NULL
+        ELSE toString(site.defence_with_iron_dome)
+      END AS site_defence_with_iron_dome,
+      facility.details_on_facility_purpose AS facility_purpose_details,
+      facility.operational_significance_if_damaged AS operational_significance_if_damaged
+    ORDER BY coalesce(facility.name, facility.id, '')
+    '''
+
+    try:
+        with driver.session(database=database) if database else driver.session() as session:
+            return [
+                {
+                    'id': record['id'],
+                    'site_id': record['site_id'],
+                    'name': record['name'],
+                    'system_name': record['department_name'] or [],
+                    'department_name': record['department_name'] or [],
+                    'effort_name': record['effort_name'] or [],
+                    'site_level_for_defence_with_upper_layer': record['site_level_for_defence_with_upper_layer'],
+                    'backup_site': record['backup_site'] or [],
+                    'dependent_infrastructures': record['dependent_infrastructures'] or [],
+                    'site_defence_with_iron_dome': record['site_defence_with_iron_dome'],
+                    'facility_purpose_details': record['facility_purpose_details'],
+                    'operational_significance_if_damaged': record['operational_significance_if_damaged'],
+                }
+                for record in session.run(query)
+            ]
+    except Neo4jError as exc:
+        raise DatabaseError(
+            message=str(exc) or 'Failed to query facilities for Qlik.',
+            details={
+                'database': database,
+                'neo4j_error': str(exc),
+                'neo4j_code': getattr(exc, 'code', None),
+            },
+        ) from exc
 
 
 def fetch_node_details(driver: Driver, node_id: str, database: str | None = None) -> dict[str, Any]:
@@ -789,7 +876,7 @@ def _build_qlik_polygon_fields(raw_polygon: Any) -> dict[str, Any]:
     center_x, center_y = _calculate_polygon_center(corrected_polygon)
 
     return {
-        'corrected_polygon': corrected_polygon,
+        'corrected_polygon': _format_corrected_polygon(corrected_polygon),
         'center_x': center_x,
         'center_y': center_y,
     }
@@ -841,3 +928,10 @@ def _calculate_polygon_center(points: list[list[float]]) -> tuple[float | None, 
     xs = [point[0] for point in points]
     ys = [point[1] for point in points]
     return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+
+
+def _format_corrected_polygon(points: list[list[float]]) -> str | None:
+    if not points:
+        return None
+
+    return str([[points]])

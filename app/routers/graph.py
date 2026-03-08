@@ -43,6 +43,7 @@ async def get_sites_infrastructures_links_for_qlik(
         extra={
             'nodes_count': len(graph.get('nodes', [])),
             'edges_count': len(graph.get('edges', [])),
+            'facilities_count': len(graph.get('facilities', [])),
         },
     )
 

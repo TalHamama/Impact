@@ -53,11 +53,27 @@ class QlikSiteInfrastructureNode(BaseModel):
     node_type: str | None = None
     name: str | None = None
     polygon: Any | None = None
-    corrected_polygon: list[Any] = Field(default_factory=list)
+    corrected_polygon: str | None = None
     center_x: float | None = None
     center_y: float | None = None
+
+
+class QlikFacilitySummary(BaseModel):
+    id: str | None = None
+    site_id: str | None = None
+    name: str | None = None
+    system_name: list[str] = Field(default_factory=list)
+    department_name: list[str] = Field(default_factory=list)
+    effort_name: list[str] = Field(default_factory=list)
+    site_level_for_defence_with_upper_layer: str | None = None
+    backup_site: list[str] = Field(default_factory=list)
+    dependent_infrastructures: list[str] = Field(default_factory=list)
+    site_defence_with_iron_dome: str | None = None
+    facility_purpose_details: str | None = None
+    operational_significance_if_damaged: str | None = None
 
 
 class QlikSitesInfrastructuresLinksResponse(BaseModel):
     nodes: list[QlikSiteInfrastructureNode] = Field(default_factory=list)
     edges: list[SiteInfrastructureEdge] = Field(default_factory=list)
+    facilities: list[QlikFacilitySummary] = Field(default_factory=list)
