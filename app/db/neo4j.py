@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from collections.abc import Generator
+import re
 from typing import Any
 
 from neo4j import Driver, GraphDatabase
@@ -8,20 +9,18 @@ from neo4j.exceptions import Neo4jError
 
 from app.utils.errors import DatabaseError, NotFoundError
 
-SITE_LABEL = 'Site'
-FACILITY_LABEL = 'Facility'
-INFRASTRUCTURE_LABELS = ['Infrastructure', 'Infrastrcture']
-COMPONENT_LABELS = ['Component', 'Componenet']
-CONTAINES_REL = 'CONTAINES'
-INTERCHANGEABLE_REL = 'INTERCHANGEABLE'
-DEPENDENCY_REL = 'DEPENDENCY'
-DEPENDS_REL = 'DEPENDS'
+SITE_NODE_LABEL = 'Site'
+FACILITY_NODE_LABEL = 'Facility'
+INFRASTRUCTURE_NODE_LABEL = 'Infrastructure'
+COMPONENT_NODE_LABEL = 'Component'
+CONTAINS_RELATIONSHIP_TYPE = 'CONTAINS'
+BACKUP_FOR_RELATIONSHIP_TYPE = 'BACKUP_FOR'
+DEPENDS_RELATIONSHIP_TYPE = 'DEPENDS'
 
-SITE_AND_INFRASTRUCTURE_LABELS_CYPHER = (
-    f"['{SITE_LABEL}', '{INFRASTRUCTURE_LABELS[0]}', '{INFRASTRUCTURE_LABELS[1]}']"
+SITE_AND_INFRASTRUCTURE_NODE_LABELS_CYPHER = (
+    f"['{SITE_NODE_LABEL}', '{INFRASTRUCTURE_NODE_LABEL}']"
 )
-INFRASTRUCTURE_LABELS_CYPHER = f"['{INFRASTRUCTURE_LABELS[0]}', '{INFRASTRUCTURE_LABELS[1]}']"
-COMPONENT_LABELS_CYPHER = "['Component', 'Componenet']"
+INFRASTRUCTURE_NODE_LABELS_CYPHER = f"['{INFRASTRUCTURE_NODE_LABEL}']"
 
 
 class Neo4jDriver:
@@ -233,13 +232,12 @@ def fetch_graph_overview(driver: Driver, database: str | None = None) -> dict[st
 def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None = None) -> dict[str, Any]:
     nodes_query = f'''
     MATCH (n)
-    WHERE any(label IN labels(n) WHERE label IN {SITE_AND_INFRASTRUCTURE_LABELS_CYPHER})
+    WHERE any(label IN labels(n) WHERE label IN {SITE_AND_INFRASTRUCTURE_NODE_LABELS_CYPHER})
     RETURN
       n.id AS node_id,
       CASE
-        WHEN '{SITE_LABEL}' IN labels(n) THEN '{SITE_LABEL}'
-        WHEN '{INFRASTRUCTURE_LABELS[0]}' IN labels(n) THEN '{INFRASTRUCTURE_LABELS[0]}'
-        ELSE '{INFRASTRUCTURE_LABELS[1]}'
+        WHEN '{SITE_NODE_LABEL}' IN labels(n) THEN '{SITE_NODE_LABEL}'
+        ELSE '{INFRASTRUCTURE_NODE_LABEL}'
       END AS node_type,
       n.name AS node_name,
       n.polygon AS node_polygon
@@ -249,8 +247,8 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
     edges_query = f'''
     CALL () {{
       MATCH (a)-[r]-(b)
-      WHERE any(label IN labels(a) WHERE label IN {SITE_AND_INFRASTRUCTURE_LABELS_CYPHER})
-        AND any(label IN labels(b) WHERE label IN {SITE_AND_INFRASTRUCTURE_LABELS_CYPHER})
+      WHERE any(label IN labels(a) WHERE label IN {SITE_AND_INFRASTRUCTURE_NODE_LABELS_CYPHER})
+        AND any(label IN labels(b) WHERE label IN {SITE_AND_INFRASTRUCTURE_NODE_LABELS_CYPHER})
       RETURN DISTINCT
         startNode(r).id AS source_id,
         endNode(r).id AS target_id,
@@ -258,7 +256,7 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
 
       UNION
 
-      MATCH (s1:{SITE_LABEL})-[:{CONTAINES_REL}]->(:{FACILITY_LABEL})-[:{INTERCHANGEABLE_REL}]->(s2:{SITE_LABEL})
+      MATCH (s1:{SITE_NODE_LABEL})-[:{CONTAINS_RELATIONSHIP_TYPE}]->(:{FACILITY_NODE_LABEL})-[:{BACKUP_FOR_RELATIONSHIP_TYPE}]->(s2:{SITE_NODE_LABEL})
       WITH
         CASE WHEN s1.id < s2.id THEN s1.id ELSE s2.id END AS source_id,
         CASE WHEN s1.id < s2.id THEN s2.id ELSE s1.id END AS target_id
@@ -266,16 +264,16 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
       RETURN DISTINCT
         source_id,
         target_id,
-        '{INTERCHANGEABLE_REL}' AS relationship_type
+        '{BACKUP_FOR_RELATIONSHIP_TYPE}' AS relationship_type
 
       UNION
 
-      MATCH (s:{SITE_LABEL})-[:{CONTAINES_REL}]->(:{FACILITY_LABEL})-[:{DEPENDENCY_REL}]->(i)
-      WHERE any(label IN labels(i) WHERE label IN {INFRASTRUCTURE_LABELS_CYPHER})
+      MATCH (s:{SITE_NODE_LABEL})-[:{CONTAINS_RELATIONSHIP_TYPE}]->(:{FACILITY_NODE_LABEL})-[:{DEPENDS_RELATIONSHIP_TYPE}]->(i)
+      WHERE any(label IN labels(i) WHERE label IN {INFRASTRUCTURE_NODE_LABELS_CYPHER})
       RETURN DISTINCT
         s.id AS source_id,
         i.id AS target_id,
-        '{DEPENDS_REL}' AS relationship_type
+        '{DEPENDS_RELATIONSHIP_TYPE}' AS relationship_type
     }}
     RETURN DISTINCT source_id, target_id, relationship_type
     ORDER BY relationship_type, source_id, target_id
@@ -303,13 +301,30 @@ def fetch_sites_infrastructures_with_links(driver: Driver, database: str | None 
             return {'nodes': _to_json_compatible(nodes), 'edges': _to_json_compatible(edges)}
     except Neo4jError as exc:
         raise DatabaseError(
-            message=str(exc) or f'Failed to query {SITE_LABEL}/{INFRASTRUCTURE_LABELS[1]} links from Neo4j.',
+            message=str(exc) or f'Failed to query {SITE_NODE_LABEL}/{INFRASTRUCTURE_NODE_LABEL} links from Neo4j.',
             details={
                 'database': database,
                 'neo4j_error': str(exc),
                 'neo4j_code': getattr(exc, 'code', None),
             },
         ) from exc
+
+
+def fetch_sites_infrastructures_with_links_for_qlik(driver: Driver, database: str | None = None) -> dict[str, Any]:
+    graph = fetch_sites_infrastructures_with_links(driver=driver, database=database)
+
+    nodes = [
+        {
+            **node,
+            **_build_qlik_polygon_fields(node.get('polygon')),
+        }
+        for node in graph.get('nodes', [])
+    ]
+
+    return {
+        'nodes': _to_json_compatible(nodes),
+        'edges': _to_json_compatible(graph.get('edges', [])),
+    }
 
 
 def fetch_node_details(driver: Driver, node_id: str, database: str | None = None) -> dict[str, Any]:
@@ -767,3 +782,62 @@ def _to_json_compatible(value: Any) -> Any:
         return str(value)
 
     return value
+
+
+def _build_qlik_polygon_fields(raw_polygon: Any) -> dict[str, Any]:
+    corrected_polygon = _extract_polygon_coordinates(raw_polygon)
+    center_x, center_y = _calculate_polygon_center(corrected_polygon)
+
+    return {
+        'corrected_polygon': corrected_polygon,
+        'center_x': center_x,
+        'center_y': center_y,
+    }
+
+
+def _extract_polygon_coordinates(raw_polygon: Any) -> list[list[float]]:
+    if isinstance(raw_polygon, dict):
+        coordinates = raw_polygon.get('coordinates') or raw_polygon.get('cordinates') or []
+        if coordinates and isinstance(coordinates, list) and isinstance(coordinates[0], list):
+            first_item = coordinates[0]
+            if first_item and isinstance(first_item[0], list):
+                return [point for point in (_normalize_point(item) for item in first_item) if point is not None]
+            return [point for point in (_normalize_point(item) for item in coordinates) if point is not None]
+        return []
+
+    if not isinstance(raw_polygon, str):
+        return []
+
+    match = re.fullmatch(r'\s*POLYGON\s*\(\((.*)\)\)\s*', raw_polygon, flags=re.IGNORECASE)
+    if match is None:
+        return []
+
+    points: list[list[float]] = []
+    for pair in match.group(1).split(','):
+        parts = pair.strip().split()
+        if len(parts) < 2:
+            continue
+        try:
+            points.append([float(parts[0]), float(parts[1])])
+        except ValueError:
+            continue
+    return points
+
+
+def _normalize_point(point: Any) -> list[float] | None:
+    if not isinstance(point, (list, tuple)) or len(point) < 2:
+        return None
+
+    try:
+        return [float(point[0]), float(point[1])]
+    except (TypeError, ValueError):
+        return None
+
+
+def _calculate_polygon_center(points: list[list[float]]) -> tuple[float | None, float | None]:
+    if not points:
+        return None, None
+
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2

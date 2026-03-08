@@ -19,8 +19,6 @@ from swagger_ui_bundle import swagger_ui_path
 from app.config import get_settings
 from app.db.neo4j import Neo4jDriver, check_neo4j_ready
 from app.routers.graph import router as graph_router
-from app.routers.nodes import router as nodes_router
-from app.routers.relations import router as relations_router
 from app.utils.errors import AppError
 from app.utils.responses import error_response, success_response
 
@@ -56,8 +54,6 @@ app = FastAPI(
     lifespan=lifespan
 )
 app.include_router(graph_router)
-app.include_router(nodes_router)
-app.include_router(relations_router)
 
 if settings.cors_origins:
     app.add_middleware(

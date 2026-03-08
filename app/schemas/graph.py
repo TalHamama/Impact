@@ -46,3 +46,18 @@ class SiteInfrastructureEdge(BaseModel):
 class SitesInfrastructuresLinksResponse(BaseModel):
     nodes: list[SiteInfrastructureNode] = Field(default_factory=list)
     edges: list[SiteInfrastructureEdge] = Field(default_factory=list)
+
+
+class QlikSiteInfrastructureNode(BaseModel):
+    id: str | None = None
+    node_type: str | None = None
+    name: str | None = None
+    polygon: Any | None = None
+    corrected_polygon: list[Any] = Field(default_factory=list)
+    center_x: float | None = None
+    center_y: float | None = None
+
+
+class QlikSitesInfrastructuresLinksResponse(BaseModel):
+    nodes: list[QlikSiteInfrastructureNode] = Field(default_factory=list)
+    edges: list[SiteInfrastructureEdge] = Field(default_factory=list)
