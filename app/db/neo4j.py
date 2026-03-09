@@ -20,6 +20,12 @@ BACKUP_FOR_RELATIONSHIP_TYPE = 'BACKUP_FOR'
 DEPENDS_RELATIONSHIP_TYPE = 'DEPENDS'
 PART_OF_SYSTEM_RELATIONSHIP_TYPE = 'PART_OF_SYSTEM'
 SUPPORT_RELATIONSHIP_TYPE = 'SUPPORT'
+LINK_MAP_INCLUDED_NODE_LABELS = {
+    SITE_NODE_LABEL,
+    FACILITY_NODE_LABEL,
+    COMPONENT_NODE_LABEL,
+    EFFORT_NODE_LABEL,
+}
 
 SITE_AND_INFRASTRUCTURE_NODE_LABELS_CYPHER = (
     f"['{SITE_NODE_LABEL}', '{INFRASTRUCTURE_NODE_LABEL}']"
@@ -838,6 +844,179 @@ def fetch_node_full_map(driver: Driver, node_id: str, database: str | None = Non
         ) from exc
 
 
+def fetch_node_link_map_until_effort(
+    driver: Driver,
+    node_id: str,
+    database: str | None = None,
+) -> dict[str, Any]:
+    node_query = '''
+    MATCH (n {id: $node_id})
+    RETURN
+      n.id AS node_id,
+      n.name AS node_name,
+      labels(n) AS node_labels
+    LIMIT 1
+    '''
+
+    map_query = f'''
+    MATCH (start {{id: $node_id}})
+    MATCH path = (start)-[*0..]-(reachable)
+    WHERE
+      (
+        size(nodes(path)) = 1
+        OR NOT '{EFFORT_NODE_LABEL}' IN labels(start)
+      )
+      AND all(
+        idx IN CASE
+          WHEN size(nodes(path)) <= 2 THEN []
+          ELSE range(1, size(nodes(path)) - 2)
+        END
+        WHERE NOT '{EFFORT_NODE_LABEL}' IN labels(nodes(path)[idx])
+      )
+    WITH collect(DISTINCT path) AS paths
+    UNWIND paths AS path
+    UNWIND nodes(path) AS path_node
+    WITH
+      paths,
+      collect(DISTINCT path_node) AS raw_nodes
+    UNWIND paths AS path
+    UNWIND relationships(path) AS rel
+    WITH
+      raw_nodes,
+      collect(
+        DISTINCT {{
+          source_id: startNode(rel).id,
+          target_id: endNode(rel).id,
+          relationship_type: type(rel)
+        }}
+      ) AS raw_edges
+    RETURN
+      raw_nodes,
+      raw_edges
+    '''
+
+    try:
+        with driver.session(database=database) if database else driver.session() as session:
+            node_record = session.run(node_query, node_id=node_id).single()
+            if node_record is None:
+                raise NotFoundError(
+                    message=f'Node with id "{node_id}" was not found.',
+                    details={'node_id': node_id},
+                )
+
+            root_node = {
+                'id': node_record['node_id'],
+                'name': node_record['node_name'],
+                'node_type': _select_primary_label(node_record['node_labels'] or []),
+            }
+
+            map_record = session.run(map_query, node_id=node_id).single()
+            if map_record is None:
+                return {
+                    'node': root_node,
+                    'links_map': {'nodes': [], 'edges': []},
+                }
+
+            raw_nodes = map_record['raw_nodes'] or []
+            raw_edges = map_record['raw_edges'] or []
+
+            nodes = [
+                {
+                    'id': raw_node.get('id'),
+                    'name': raw_node.get('name'),
+                    'node_type': primary_label,
+                }
+                for raw_node in sorted(
+                    raw_nodes,
+                    key=lambda item: (item.get('name') if hasattr(item, 'get') else None) or (item.get('id') if hasattr(item, 'get') else '') or '',
+                )
+                for primary_label in [_select_primary_label(list(raw_node.labels) if getattr(raw_node, 'labels', None) else [])]
+                if raw_node.get('id') and raw_node.get('id') != node_id
+                and primary_label in LINK_MAP_INCLUDED_NODE_LABELS
+            ]
+
+            included_node_ids = {node['id'] for node in nodes}
+            if root_node['node_type'] in LINK_MAP_INCLUDED_NODE_LABELS and root_node['id']:
+                included_node_ids.add(root_node['id'])
+
+            edges = [
+                {
+                    'source_id': edge.get('source_id'),
+                    'target_id': edge.get('target_id'),
+                    'relationship_type': edge.get('relationship_type'),
+                }
+                for edge in sorted(
+                    raw_edges,
+                    key=lambda item: (
+                        item.get('relationship_type') or '',
+                        item.get('source_id') or '',
+                        item.get('target_id') or '',
+                    ),
+                )
+                if edge.get('relationship_type')
+                and edge.get('source_id') in included_node_ids
+                and edge.get('target_id') in included_node_ids
+            ]
+
+            return {
+                'node': root_node,
+                'links_map': {
+                    'nodes': _to_json_compatible(nodes),
+                    'edges': _to_json_compatible(edges),
+                },
+            }
+    except NotFoundError:
+        raise
+    except Neo4jError as exc:
+        raise DatabaseError(
+            message=str(exc) or 'Failed to query node link map until Effort from Neo4j.',
+            details={
+                'node_id': node_id,
+                'database': database,
+                'neo4j_error': str(exc),
+                'neo4j_code': getattr(exc, 'code', None),
+            },
+        ) from exc
+
+
+def fetch_node_raw(driver: Driver, node_id: str, database: str | None = None) -> dict[str, Any]:
+    query = '''
+    MATCH (n {id: $node_id})
+    RETURN
+      n.id AS node_id,
+      labels(n) AS node_labels,
+      properties(n) AS node_properties
+    LIMIT 1
+    '''
+
+    try:
+        with driver.session(database=database) if database else driver.session() as session:
+            record = session.run(query, node_id=node_id).single()
+            if record is None:
+                raise NotFoundError(
+                    message=f'Node with id "{node_id}" was not found.',
+                    details={'node_id': node_id},
+                )
+
+            return {
+                'id': record['node_id'],
+                'labels': record['node_labels'] or [],
+                'properties': _to_json_compatible(record['node_properties'] or {}),
+            }
+    except NotFoundError:
+        raise
+    except Neo4jError as exc:
+        raise DatabaseError(
+            message=str(exc) or 'Failed to query raw node from Neo4j.',
+            details={
+                'node_id': node_id,
+                'database': database,
+                'neo4j_error': str(exc),
+                'neo4j_code': getattr(exc, 'code', None),
+            },
+        ) from exc
+
+
 def _to_json_compatible(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -869,6 +1048,26 @@ def _to_json_compatible(value: Any) -> Any:
         return str(value)
 
     return value
+
+
+def _select_primary_label(labels: list[str]) -> str | None:
+    if not labels:
+        return None
+
+    preferred_order = [
+        SITE_NODE_LABEL,
+        FACILITY_NODE_LABEL,
+        INFRASTRUCTURE_NODE_LABEL,
+        COMPONENT_NODE_LABEL,
+        SYSTEM_NODE_LABEL,
+        EFFORT_NODE_LABEL,
+    ]
+
+    for label in preferred_order:
+        if label in labels:
+            return label
+
+    return labels[0]
 
 
 def _build_qlik_polygon_fields(raw_polygon: Any) -> dict[str, Any]:

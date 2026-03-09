@@ -77,3 +77,31 @@ class QlikSitesInfrastructuresLinksResponse(BaseModel):
     nodes: list[QlikSiteInfrastructureNode] = Field(default_factory=list)
     edges: list[SiteInfrastructureEdge] = Field(default_factory=list)
     facilities: list[QlikFacilitySummary] = Field(default_factory=list)
+
+
+class LinkMapNode(BaseModel):
+    id: str | None = None
+    name: str | None = None
+    node_type: str | None = None
+
+
+class LinkMapEdge(BaseModel):
+    source_id: str | None = None
+    target_id: str | None = None
+    relationship_type: str
+
+
+class LinkMapPayload(BaseModel):
+    nodes: list[LinkMapNode] = Field(default_factory=list)
+    edges: list[LinkMapEdge] = Field(default_factory=list)
+
+
+class NodeLinkMapResponse(BaseModel):
+    node: LinkMapNode
+    links_map: LinkMapPayload
+
+
+class NodeRawResponse(BaseModel):
+    id: str
+    labels: list[str] = Field(default_factory=list)
+    properties: dict[str, Any] = Field(default_factory=dict)
