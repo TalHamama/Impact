@@ -256,9 +256,9 @@ def seed_relationships(driver: Driver, database: str) -> None:
             MERGE (northCommand)-[:CONTAINS]->(comms)
             MERGE (centralPower)-[:CONTAINS]->(switchgear)
 
-            MERGE (radar)-[:SUPPORT]->(alerting)
-            MERGE (comms)-[:SUPPORT]->(alerting)
-            MERGE (switchgear)-[:SUPPORT]->(recovery)
+            MERGE (northCommand)-[:SUPPORTS]->(alerting)
+            MERGE (northBackup)-[:SUPPORTS]->(alerting)
+            MERGE (centralPower)-[:SUPPORTS]->(recovery)
             '''
         ).consume()
 

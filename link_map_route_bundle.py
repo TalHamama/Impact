@@ -1,8 +1,15 @@
 """
-Consolidated code bundle for the node link-map route.
+Consolidated code bundle for the site link-map route.
 
-This file collects the actual implementation code that was added for the
-link-map route into one transferable file.
+This bundle contains the fixed-pattern implementation for the link-map route.
+It matches only this structure:
+
+Real DB pattern:
+Site -[:CONTAINS]-> Facility -[:CONTAINS]-> Component
+Facility -[:SUPPORTS]-> Effort
+
+Projected graph pattern returned to the frontend:
+Site -[:CONTAINS]-> Facility -[:CONTAINS]-> Component -[:SUPPORTS]-> Effort
 """
 
 
@@ -50,12 +57,22 @@ INFRASTRUCTURE_NODE_LABEL = 'Infrastructure'
 COMPONENT_NODE_LABEL = 'Component'
 SYSTEM_NODE_LABEL = 'System'
 EFFORT_NODE_LABEL = 'Effort'
+CONTAINS_RELATIONSHIP_TYPE = 'CONTAINS'
+SUPPORT_RELATIONSHIP_TYPE = 'SUPPORTS'
 LINK_MAP_INCLUDED_NODE_LABELS = {
     SITE_NODE_LABEL,
     FACILITY_NODE_LABEL,
     COMPONENT_NODE_LABEL,
     EFFORT_NODE_LABEL,
 }
+PRIMARY_LABEL_PREFERENCE = [
+    SITE_NODE_LABEL,
+    FACILITY_NODE_LABEL,
+    INFRASTRUCTURE_NODE_LABEL,
+    COMPONENT_NODE_LABEL,
+    SYSTEM_NODE_LABEL,
+    EFFORT_NODE_LABEL,
+]
 
 
 def _to_json_compatible(value: Any) -> Any:
@@ -94,16 +111,7 @@ def _select_primary_label(labels: list[str]) -> str | None:
     if not labels:
         return None
 
-    preferred_order = [
-        SITE_NODE_LABEL,
-        FACILITY_NODE_LABEL,
-        INFRASTRUCTURE_NODE_LABEL,
-        COMPONENT_NODE_LABEL,
-        SYSTEM_NODE_LABEL,
-        EFFORT_NODE_LABEL,
-    ]
-
-    for label in preferred_order:
+    for label in PRIMARY_LABEL_PREFERENCE:
         if label in labels:
             return label
 
@@ -127,7 +135,7 @@ def fetch_node_link_map_until_effort(
     database: str | None = None,
 ) -> dict[str, Any]:
     node_query = '''
-    MATCH (n {id: $node_id})
+    MATCH (n:Site {id: $node_id})
     RETURN
       n.id AS node_id,
       n.name AS node_name,
@@ -136,40 +144,102 @@ def fetch_node_link_map_until_effort(
     '''
 
     map_query = f'''
-    MATCH (start {{id: $node_id}})
-    MATCH path = (start)-[*0..]-(reachable)
-    WHERE
-      (
-        size(nodes(path)) = 1
-        OR NOT '{EFFORT_NODE_LABEL}' IN labels(start)
-      )
-      AND all(
-        idx IN CASE
-          WHEN size(nodes(path)) <= 2 THEN []
-          ELSE range(1, size(nodes(path)) - 2)
-        END
-        WHERE NOT '{EFFORT_NODE_LABEL}' IN labels(nodes(path)[idx])
-      )
-    WITH collect(DISTINCT path) AS paths
-    UNWIND paths AS path
-    UNWIND nodes(path) AS path_node
+    MATCH (start:{SITE_NODE_LABEL} {{id: $node_id}})
+    OPTIONAL MATCH (start)-[site_facility_rel:{CONTAINS_RELATIONSHIP_TYPE}]->(facility:{FACILITY_NODE_LABEL})
+    WITH start, facility, collect(DISTINCT site_facility_rel) AS site_facility_rels
+    CALL (facility) {{
+      OPTIONAL MATCH (facility)-[facility_component_rel:{CONTAINS_RELATIONSHIP_TYPE}]->(component:{COMPONENT_NODE_LABEL})
+      WITH facility, facility_component_rel, component
+      ORDER BY coalesce(component.name, component.id, '')
+      RETURN
+        collect(DISTINCT component) AS facility_components,
+        collect(DISTINCT facility_component_rel) AS facility_component_rels,
+        head(collect(component)) AS representative_component
+    }}
+    CALL (facility, representative_component) {{
+      OPTIONAL MATCH (facility)-[:{SUPPORT_RELATIONSHIP_TYPE}]->(effort:{EFFORT_NODE_LABEL})
+      WITH facility, representative_component, effort
+      ORDER BY coalesce(effort.name, effort.id, '')
+      RETURN
+        collect(DISTINCT effort) AS facility_efforts,
+        collect(
+          DISTINCT CASE
+            WHEN representative_component IS NULL OR effort IS NULL THEN NULL
+            ELSE {{
+              source_id: representative_component.id,
+              target_id: effort.id,
+              relationship_type: '{SUPPORT_RELATIONSHIP_TYPE}'
+            }}
+          END
+        ) AS projected_component_effort_edges
+    }}
     WITH
-      paths,
-      collect(DISTINCT path_node) AS raw_nodes
-    UNWIND paths AS path
-    UNWIND relationships(path) AS rel
+      start,
+      collect(DISTINCT facility) AS facilities,
+      collect(DISTINCT site_facility_rels) AS grouped_site_facility_rels,
+      collect(DISTINCT facility_components) AS grouped_components,
+      collect(DISTINCT facility_component_rels) AS grouped_facility_component_rels,
+      collect(DISTINCT facility_efforts) AS grouped_efforts,
+      collect(DISTINCT projected_component_effort_edges) AS grouped_component_effort_edges
+    CALL (start, facilities, grouped_components, grouped_efforts) {{
+      WITH
+        start,
+        facilities,
+        reduce(acc = [], component_group IN grouped_components | acc + component_group) AS all_components,
+        reduce(acc = [], effort_group IN grouped_efforts | acc + effort_group) AS all_efforts
+      WITH start, facilities + all_components + all_efforts AS candidate_nodes
+      UNWIND candidate_nodes AS n
+      WITH DISTINCT start, n
+      WITH start, n, [label IN $primary_label_preference WHERE label IN labels(n)][0] AS primary_label
+      WHERE n IS NOT NULL
+        AND n.id IS NOT NULL
+        AND n.id <> start.id
+        AND primary_label IN $included_node_labels
+      ORDER BY coalesce(n.name, n.id, '')
+      RETURN collect({{
+        id: n.id,
+        name: n.name,
+        node_type: primary_label
+      }}) AS raw_nodes,
+      collect(n.id) AS projected_node_ids
+    }}
     WITH
+      start,
       raw_nodes,
-      collect(
-        DISTINCT {{
+      projected_node_ids,
+      reduce(acc = [], rel_group IN grouped_site_facility_rels | acc + rel_group) AS site_facility_relationships,
+      reduce(acc = [], rel_group IN grouped_facility_component_rels | acc + rel_group) AS facility_component_relationships,
+      reduce(acc = [], edge_group IN grouped_component_effort_edges | acc + edge_group) AS projected_component_effort_edges
+    CALL (start, site_facility_relationships, facility_component_relationships, projected_component_effort_edges, projected_node_ids) {{
+      WITH
+        CASE
+          WHEN start.id IS NOT NULL THEN projected_node_ids + start.id
+          ELSE projected_node_ids
+        END AS included_node_ids,
+        site_facility_relationships,
+        facility_component_relationships,
+        projected_component_effort_edges
+      CALL {{
+        WITH site_facility_relationships, facility_component_relationships
+        UNWIND site_facility_relationships + facility_component_relationships AS rel
+        WITH DISTINCT rel
+        WHERE rel IS NOT NULL
+        RETURN collect({{
           source_id: startNode(rel).id,
           target_id: endNode(rel).id,
           relationship_type: type(rel)
-        }}
-      ) AS raw_edges
-    RETURN
-      raw_nodes,
-      raw_edges
+        }}) AS physical_edges
+      }}
+      WITH included_node_ids, physical_edges, projected_component_effort_edges
+      UNWIND physical_edges + projected_component_effort_edges AS edge
+      WITH DISTINCT edge, included_node_ids
+      WHERE edge IS NOT NULL
+        AND edge.source_id IN included_node_ids
+        AND edge.target_id IN included_node_ids
+      ORDER BY edge.relationship_type, edge.source_id, edge.target_id
+      RETURN collect(edge) AS raw_edges
+    }}
+    RETURN raw_nodes, raw_edges
     '''
 
     try:
@@ -177,7 +247,7 @@ def fetch_node_link_map_until_effort(
             node_record = session.run(node_query, node_id=node_id).single()
             if node_record is None:
                 raise NotFoundError(
-                    message=f'Node with id "{node_id}" was not found.',
+                    message=f'Site with id "{node_id}" was not found.',
                     details={'node_id': node_id},
                 )
 
@@ -187,7 +257,12 @@ def fetch_node_link_map_until_effort(
                 'node_type': _select_primary_label(node_record['node_labels'] or []),
             }
 
-            map_record = session.run(map_query, node_id=node_id).single()
+            map_record = session.run(
+                map_query,
+                node_id=node_id,
+                included_node_labels=sorted(LINK_MAP_INCLUDED_NODE_LABELS),
+                primary_label_preference=PRIMARY_LABEL_PREFERENCE,
+            ).single()
             if map_record is None:
                 return {
                     'node': root_node,
@@ -197,49 +272,11 @@ def fetch_node_link_map_until_effort(
             raw_nodes = map_record['raw_nodes'] or []
             raw_edges = map_record['raw_edges'] or []
 
-            nodes = [
-                {
-                    'id': raw_node.get('id'),
-                    'name': raw_node.get('name'),
-                    'node_type': primary_label,
-                }
-                for raw_node in sorted(
-                    raw_nodes,
-                    key=lambda item: (item.get('name') if hasattr(item, 'get') else None) or (item.get('id') if hasattr(item, 'get') else '') or '',
-                )
-                for primary_label in [_select_primary_label(list(raw_node.labels) if getattr(raw_node, 'labels', None) else [])]
-                if raw_node.get('id') and raw_node.get('id') != node_id
-                and primary_label in LINK_MAP_INCLUDED_NODE_LABELS
-            ]
-
-            included_node_ids = {node['id'] for node in nodes}
-            if root_node['node_type'] in LINK_MAP_INCLUDED_NODE_LABELS and root_node['id']:
-                included_node_ids.add(root_node['id'])
-
-            edges = [
-                {
-                    'source_id': edge.get('source_id'),
-                    'target_id': edge.get('target_id'),
-                    'relationship_type': edge.get('relationship_type'),
-                }
-                for edge in sorted(
-                    raw_edges,
-                    key=lambda item: (
-                        item.get('relationship_type') or '',
-                        item.get('source_id') or '',
-                        item.get('target_id') or '',
-                    ),
-                )
-                if edge.get('relationship_type')
-                and edge.get('source_id') in included_node_ids
-                and edge.get('target_id') in included_node_ids
-            ]
-
             return {
                 'node': root_node,
                 'links_map': {
-                    'nodes': _to_json_compatible(nodes),
-                    'edges': _to_json_compatible(edges),
+                    'nodes': _to_json_compatible(raw_nodes),
+                    'edges': _to_json_compatible(raw_edges),
                 },
             }
     except NotFoundError:
